@@ -1,0 +1,3659 @@
+@font-face {
+    font-family: 'CustomHeader';
+    src: url('fonts/SSN2526-SemiBold.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'CustomText';
+    src: url('fonts/SSN2526-Regular.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* 1. Global Lock */
+html, body {
+    width: 100vw; /* Exact viewport width */
+    height: 100dvh; /* Exact dynamic viewport height */
+    margin: 0;
+    padding: 0;
+    overflow: hidden !important; /* No global scroll */
+    position: fixed; /* Lock the body in place */
+    top: 0;
+    left: 0;
+    overscroll-behavior: none; /* Disable bounce effects */
+    touch-action: none; /* Disable browser gestures globally */
+    -webkit-overflow-scrolling: auto; /* Stop rubber-banding on body */
+}
+
+/* 2. Enable Scroll Zones */
+#cardsContainer, 
+#squad-grid, 
+#collection-cards-grid, 
+#graveyard-grid,
+#faction-screen {
+    touch-action: pan-y !important; /* Enable vertical scroll here */
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch; /* Smooth scroll inside containers */
+    overscroll-behavior: contain; /* Prevent scroll chaining to body */
+}
+
+body {
+    background-color: var(--tg-theme-bg-color, #0a0a0a);
+    background: linear-gradient(135deg, var(--tg-theme-bg-color, #0a0a0a) 0%, var(--tg-theme-secondary-bg-color, #1a1a1a) 100%);
+    color: var(--tg-theme-text-color, #ffffff);
+    
+    /* INTERACTIVITY FIXES */
+    -webkit-tap-highlight-color: transparent;
+    cursor: pointer; /* iOS hint */
+    font-family: 'CustomText', sans-serif;
+}
+
+body::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: radial-gradient(circle at 50% 50%, rgba(255, 0, 0, 0.05) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* Блокировка реакции карт на фоне во время инспекции */
+body.is-inspecting .card,
+body.is-inspecting .coach-card,
+body.is-inspecting .card-on-field {
+    /* НЕ отключаем pointer-events, чтобы elementFromPoint мог находить карты */
+    transform: none !important; /* Сбросить увеличение */
+    z-index: 1 !important; /* Сбросить z-index */
+}
+
+/* Блокируем hover эффекты через отключение transition и явный сброс состояний */
+body.is-inspecting .card:hover,
+body.is-inspecting .coach-card:hover,
+body.is-inspecting .card-on-field:hover {
+    transform: none !important;
+    z-index: 1 !important;
+}
+
+/* Оверлей должен пропускать события сквозь себя */
+body.is-inspecting #card-inspection-overlay {
+    pointer-events: none !important;
+}
+
+button, .menu-button, .back-button {
+    touch-action: manipulation; /* Allows clicks, stops zoom */
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    transform: translateZ(0); /* Хак для GPU, чинит клики на iOS */
+}
+
+/* Global disable for game elements - prevents native iOS interactions */
+.card, .card img, 
+.coach-card, .coach-card img,
+.card-on-field, .card-on-field img,
+.tactics-slot, .enemy-card-back {
+    -webkit-touch-callout: none !important; /* Disables "Save Image" menu on iOS */
+    -webkit-user-select: none !important;   /* Disables magnifying glass/text select */
+    user-select: none !important;
+    -webkit-user-drag: none !important;     /* Disables native drag-and-drop ghost */
+    user-drag: none !important;
+}
+
+/* Ensure images specifically don't trigger interactions */
+img {
+    pointer-events: none; /* Let clicks pass through to the parent div */
+}
+
+h1, h2, h3 {
+    font-family: 'CustomHeader', sans-serif;
+    text-shadow: none;
+}
+
+/* Зоны игрока и противника */
+.game-zone {
+    flex: 1; /* Равномерное распределение */
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 0 !important; /* Убираем padding, чтобы отступы не суммировались */
+    gap: 2px !important;
+    box-sizing: border-box;
+}
+
+.enemy-zone {
+    background: transparent;
+    padding: 0 !important; /* Убираем padding, чтобы отступы не суммировались */
+    justify-content: flex-end !important; /* Прижимаем ряды соперника к низу зоны, к границе табло */
+}
+
+.player-zone {
+    background: transparent;
+    padding: 0 !important; /* Убираем padding, чтобы отступы не суммировались */
+    justify-content: flex-start !important; /* Прижимаем ряды игрока к верху зоны, к границе табло */
+}
+
+/* Аккордеон эффект для игрового поля */
+.opponent-side,
+.player-side {
+    /* Плавная анимация изменения размера */
+    transition: flex-grow 0.6s cubic-bezier(0.25, 0.8, 0.25, 1), opacity 0.4s ease, filter 0.4s ease;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    /* Базовое состояние - равные доли (переопределяем flex: 0 0 auto из .game-zone) */
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+/* Состояния Аккордеона (управляются классом на .game-board) */
+/* -- ХОД ИГРОКА -- */
+.game-board.state-player-turn .player-side {
+    flex-grow: 1.8; /* Твоя сторона становится почти в 2 раза больше */
+    opacity: 1;
+}
+.game-board.state-player-turn .opponent-side {
+    flex-grow: 0.6; /* Сторона врага сжимается */
+    opacity: 0.7; /* И немного затемняется, чтобы не отвлекать */
+    filter: grayscale(30%); /* Опционально: немного обесцветить врага */
+}
+
+/* -- ХОД СОПЕРНИКА -- */
+.game-board.state-opponent-turn .opponent-side {
+    flex-grow: 1.8;
+    opacity: 1;
+    filter: none;
+}
+.game-board.state-opponent-turn .player-side {
+    flex-grow: 0.6;
+    opacity: 0.7;
+}
+
+/* Контейнер для рядов */
+.rows-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1dvh !important; /* CHANGED: Reduced from 2dvh to 1dvh */
+    width: 100%;
+}
+
+/* Ряд с тактикой */
+.row-with-tactics {
+    display: flex;
+    gap: 6px !important;
+    align-items: center !important;
+    width: 100%;
+}
+
+/* Центральное табло */
+#main-scoreboard {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    padding: 12px 30px;
+    height: 60px;
+    flex-shrink: 0;
+    background: rgba(20, 20, 20, 0.8);
+    backdrop-filter: blur(15px);
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-radius: 16px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6), inset 0 2px 4px rgba(255, 255, 255, 0.1);
+    margin: 10px 0;
+    width: 100%;
+    position: relative;
+    z-index: 100;
+    box-sizing: border-box;
+}
+
+.team-left,
+.team-right {
+    font-family: 'CustomHeader', sans-serif;
+    font-size: 18px;
+    font-weight: bold;
+    color: rgba(255, 255, 255, 0.9);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+    flex-shrink: 0;
+}
+
+#current-score-player,
+#current-score-enemy {
+    font-family: 'CustomHeader', sans-serif;
+    font-size: 32px;
+    font-weight: bold;
+    color: #ffffff;
+    text-shadow: none;
+    min-width: 60px;
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+#match-score {
+    font-family: 'CustomHeader', sans-serif;
+    font-size: 42px;
+    font-weight: bold;
+    color: #ffd700;
+    text-shadow: none;
+    min-width: 100px;
+    text-align: center;
+    background: rgba(255, 215, 0, 0.1);
+    padding: 8px 20px;
+    border-radius: 12px;
+    border: 2px solid rgba(255, 215, 0, 0.3);
+    box-shadow: none;
+    transition: all 0.3s ease;
+}
+
+/* Анимация вспышки для счетчиков */
+@keyframes scoreFlash {
+    0% {
+        transform: scale(1);
+        text-shadow: 0 0 10px rgba(255, 255, 255, 0.5), 0 2px 4px rgba(0, 0, 0, 0.8);
+    }
+    50% {
+        transform: scale(1.15);
+        text-shadow: 0 0 20px rgba(255, 255, 255, 1), 0 0 30px rgba(255, 0, 0, 0.8), 0 4px 8px rgba(0, 0, 0, 0.8);
+    }
+    100% {
+        transform: scale(1);
+        text-shadow: 0 0 10px rgba(255, 255, 255, 0.5), 0 2px 4px rgba(0, 0, 0, 0.8);
+    }
+}
+
+#current-score-player.flash,
+#current-score-enemy.flash {
+    animation: scoreFlash 0.4s ease-out;
+}
+
+#match-score.flash {
+    animation: scoreFlash 0.5s ease-out;
+}
+
+@media (max-width: 768px) {
+    #main-scoreboard {
+        gap: 12px;
+        padding: 10px 20px;
+        width: 100%;
+    }
+    
+    .team-left,
+    .team-right {
+        font-size: 14px;
+        letter-spacing: 1px;
+    }
+    
+    #current-score-player,
+    #current-score-enemy {
+        font-size: 24px;
+        min-width: 45px;
+    }
+    
+    #match-score {
+        font-size: 32px;
+        min-width: 80px;
+        padding: 6px 15px;
+    }
+}
+
+@media (max-width: 480px) {
+    #main-scoreboard {
+        gap: 8px;
+        padding: 8px 15px;
+    }
+    
+    .team-left,
+    .team-right {
+        font-size: 12px;
+    }
+    
+    #current-score-player,
+    #current-score-enemy {
+        font-size: 20px;
+        min-width: 40px;
+    }
+    
+    #match-score {
+        font-size: 26px;
+        min-width: 70px;
+        padding: 5px 12px;
+    }
+    
+    #scoreboard-notification {
+        font-size: 11px !important; /* Еще меньше на телефонах */
+        padding: 0 5px !important;
+        letter-spacing: 0; /* Убираем разрядку букв для экономии места */
+    }
+}
+
+@media (max-width: 380px) {
+    #main-scoreboard.scoreboard-center {
+        margin: 2dvh 20px !important; /* Адаптивный вертикальный отступ 2% от высоты экрана */
+    }
+}
+
+/* Центральная линия */
+/* Центральная линия - удалена, заменена табло */
+.center-line {
+    display: none;
+}
+
+/* Ряды на поле - оптимизированная высота */
+/* Базовый стиль ряда (до 5 карт) */
+.field-row {
+    background: rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(4px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center !important; /* Карты по центру */
+    padding: 0 10px !important; /* Отступы по бокам */
+    margin: 0 !important; /* Убираем вертикальные margin для точного расчета отступов */
+    position: relative;
+    height: 70px !important; /* Фиксируем высоту ряда, чтобы он не сплющивался */
+    min-height: 70px !important;
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 4px !important; /* Небольшой отступ между картами */
+    transition: all 0.3s ease;
+    box-shadow: none !important; /* Убираем внутреннюю тень, чтобы избавиться от эффекта "вдавленности" */
+    overflow-x: auto;
+    overflow-y: hidden;
+    box-sizing: border-box;
+}
+
+/* --- РЕЖИМ НАЛОЖЕНИЯ (включается JS-ом) --- */
+.field-row.overlap-mode {
+    gap: 0 !important; /* Убираем gap, чтобы CSS-отступы не суммировались с расчетными марджинами */
+    justify-content: center !important;
+}
+
+/* Убираем фиксированное наложение, теперь оно рассчитывается динамически в JS */
+
+.field-row-label {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 1; /* Чтобы иконка точно была выше фона ряда */
+    pointer-events: none; /* Чтобы клики проходили сквозь иконку */
+}
+
+.row-icon {
+    width: 50px;
+    height: auto;
+    opacity: 0.2; /* Полупрозрачность, чтобы не мешать картам */
+    pointer-events: none; /* Чтобы сквозь них можно было кликать */
+    display: block;
+}
+
+.enemy-zone .field-row {
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    justify-content: center !important; /* Карты по центру */
+    padding: 0 10px !important; /* Симметричные отступы */
+    box-shadow: none !important; /* Убираем внутреннюю тень */
+}
+
+/* Стили для контейнеров рядов (слот тактики + ряд) */
+.game-zone > div[style*="flex"] > div[style*="flex"] {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    width: 100% !important;
+    flex: 1 !important;
+    min-height: 0 !important;
+    box-sizing: border-box !important;
+}
+
+/* Контейнеры рядов должны растягиваться на всю ширину */
+.game-zone > div[style*="flex"] > div[style*="flex-direction: column"] {
+    display: flex !important;
+    flex-direction: column !important;
+    width: 100% !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    box-sizing: border-box !important;
+}
+
+/* Основной контейнер с рядами должен растягиваться на всю ширину */
+.game-zone > div[style*="flex-direction: row"] {
+    display: flex !important;
+    flex-direction: row !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+}
+
+/* Слоты тактики - оптимизированные под новые ряды */
+.tactics-slot {
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: 1px dashed rgba(255, 255, 255, 0.25) !important;
+    border-radius: 8px !important;
+    box-sizing: border-box !important;
+    background: rgba(20, 20, 20, 0.6);
+    backdrop-filter: blur(8px);
+    flex-shrink: 0;
+    position: relative;
+    transition: all 0.3s ease;
+    overflow: visible; /* Разрешаем карте тренера выходить за границы при увеличении */
+    /* Должен быть такого же размера, как карта на поле */
+    height: 63px !important; /* 90% от 70px ряда */
+    width: 45px !important; /* По пропорции 5/7 */
+    min-width: 45px !important;
+    
+    /* FIX: Ensure it handles clicks correctly */
+    pointer-events: auto !important;
+    z-index: 80 !important; /* Higher than board(1), lower than active card(1000) */
+    touch-action: manipulation !important; /* Allow taps */
+}
+
+/* Класс подсветки для слотов тактики при выборе карты support */
+.tactics-slot.highlight-tactic {
+    border: 2px solid #FFD700;
+    box-shadow: none;
+    background: rgba(40, 40, 20, 0.7);
+    animation: pulse-glow 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+    0%, 100% {
+        box-shadow: 0 0 20px rgba(255, 215, 0, 0.8), inset 0 0 15px rgba(255, 215, 0, 0.3);
+    }
+    50% {
+        box-shadow: 0 0 30px rgba(255, 215, 0, 1), inset 0 0 20px rgba(255, 215, 0, 0.5);
+    }
+}
+
+/* Urgent Coach Pulse */
+@keyframes coachUrgentPulse {
+    0% { transform: scale(1); box-shadow: 0 0 0 rgba(255, 215, 0, 0); border-color: rgba(255, 255, 255, 0.25); }
+    50% { transform: scale(1.15); box-shadow: 0 0 30px rgba(255, 215, 0, 0.8), 0 0 10px rgba(255, 255, 255, 0.5); border-color: #ffd700; }
+    100% { transform: scale(1); box-shadow: 0 0 0 rgba(255, 215, 0, 0); border-color: rgba(255, 255, 255, 0.25); }
+}
+
+.coach-urgent {
+    animation: coachUrgentPulse 1.5s infinite ease-in-out !important;
+    z-index: 200 !important; /* Ensure it pops out above everything */
+}
+
+.tactics-slot:active {
+    border-color: rgba(255, 255, 255, 0.5);
+    background: rgba(30, 30, 30, 0.7);
+}
+
+.tactics-slot.has-coach {
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+.tactics-slot-label {
+    display: none !important;
+}
+
+.tactics-slot .card-on-field {
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    border-radius: 6px;
+}
+
+/* Колонка колоды и отбоя */
+/* Колоды и отбои - скрыты в новом вертикальном макете */
+.deck-graveyard-column {
+    display: none;
+}
+
+/* Колода */
+.deck-container {
+    width: 90px;
+    height: 126px;
+    background: rgba(20, 20, 20, 0.7);
+    backdrop-filter: blur(8px);
+    border: 2px solid rgba(255, 255, 255, 0.15);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4), inset 0 2px 4px rgba(0, 0, 0, 0.3);
+    transition: all 0.3s ease;
+}
+
+.deck-container::before {
+    content: '';
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    background: rgba(40, 40, 40, 0.8);
+    backdrop-filter: blur(8px);
+    border-radius: 10px;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6), 0 2px 4px rgba(0, 0, 0, 0.4);
+}
+
+.deck-container::after {
+    content: '?';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 32px;
+    font-weight: bold;
+    color: rgba(255, 255, 255, 0.6);
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+    font-family: 'CustomHeader', sans-serif;
+    z-index: 1;
+}
+
+.deck-counter {
+    position: absolute;
+    bottom: 5px;
+    right: 5px;
+    background: rgba(255, 0, 0, 0.9);
+    color: white;
+    font-size: 14px;
+    font-weight: bold;
+    padding: 3px 8px;
+    border-radius: 12px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+    z-index: 2;
+    font-family: 'CustomHeader', sans-serif;
+    min-width: 24px;
+    text-align: center;
+}
+
+/* Отбой */
+.graveyard-container {
+    width: 90px;
+    height: 126px;
+    background: rgba(20, 20, 20, 0.7);
+    backdrop-filter: blur(8px);
+    border: 2px solid rgba(255, 255, 255, 0.15);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4), inset 0 2px 4px rgba(0, 0, 0, 0.3);
+    transition: all 0.3s ease;
+}
+
+.graveyard-container:active {
+    border-color: rgba(255, 255, 255, 0.3);
+    background: rgba(30, 30, 30, 0.8);
+}
+
+.graveyard-icon {
+    font-size: 48px;
+    color: rgba(255, 255, 255, 0.7);
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+    z-index: 1;
+}
+
+/* Добавляем базовую плавность и состояние для отбоя */
+#playerGraveyard,
+#enemyGraveyard,
+.graveyard-inner-slot {
+    /* Плавный переход в обе стороны */
+    transition: opacity 0.5s ease-in-out, filter 0.5s ease-in-out !important;
+    /* Базовое состояние (когда есть карты) */
+    opacity: 1;
+    filter: grayscale(0%);
+}
+
+/* Состояние пустого отбоя */
+.graveyard-empty {
+    opacity: 0.4 !important;
+    filter: grayscale(100%) !important;
+    /* Убираем transition отсюда, так как он теперь в базовом классе */
+}
+
+
+@media (max-width: 480px) {
+    .field-row {
+        min-height: 50px;
+        max-height: 12vh;
+        padding: 0 4px !important; /* Симметричные отступы для центрирования */
+        gap: 3px;
+        justify-content: center !important;
+    }
+    
+    
+    .tactics-slot {
+        width: 42px !important;
+        min-width: 42px !important;
+        height: 58px !important;
+        min-height: 58px !important;
+        border-radius: 6px !important;
+    }
+    
+    .tactics-slot .card-on-field {
+        width: 100% !important;
+        height: 100% !important;
+    }
+    
+    .card-on-field {
+        width: 40px;
+        height: calc(100% - 16px);
+        max-height: calc(12vh - 16px);
+    }
+    
+    /* Карты в руке должны быть крупными для мобильных */
+    .cards-container .card {
+        width: 100px;
+        height: 140px;
+        flex-shrink: 0;
+    }
+}
+
+@media (max-width: 360px) {
+    .field-row {
+        min-height: 70px;
+        max-height: 15vh;
+        padding: 0 4px !important; /* Симметричные отступы для центрирования */
+        justify-content: center !important;
+    }
+    
+    
+    .tactics-slot {
+        width: 37px !important;
+        min-width: 37px !important;
+        height: 51px !important;
+        min-height: 51px !important;
+    }
+    
+    .tactics-slot .card-on-field {
+        width: 100% !important;
+        height: 100% !important;
+    }
+    
+    .card-on-field {
+        width: 60px;
+        height: calc(100% - 24px);
+        max-height: calc(15vh - 24px);
+    }
+    
+    .card {
+        width: 60px;
+        height: 84px;
+    }
+}
+
+/* Карты на поле - увеличенные */
+/* Сброс z-index внутри ряда, чтобы герои не вылезали сами по себе */
+.field-row .card-on-field {
+    height: 90% !important; /* Карта занимает 90% высоты ряда */
+    width: auto !important; /* Ширина подстраивается автоматически */
+    aspect-ratio: 5 / 7 !important; /* ЖЕСТКО держим пропорцию карты */
+    flex-shrink: 0 !important; /* ЗАПРЕЩАЕМ сжимать карту, если их много */
+    border-radius: 8px;
+    overflow: hidden;
+    cursor: default;
+    box-shadow: -2px 0 6px rgba(0, 0, 0, 0.4) !important; /* Тень для визуального разделения при наложении */
+    position: relative;
+    border: 2px solid rgba(255, 255, 255, 0.15);
+    box-sizing: border-box;
+    z-index: auto; /* Пусть управляется JS-ом или порядком DOM */
+    margin-left: 0;
+    transition: margin 0.3s ease, transform 0.3s ease;
+}
+
+.card-on-field.hero {
+    border: 2px solid #ffd700;
+    box-shadow: none;
+    animation: heroPulseField 2s ease-in-out infinite;
+    /* z-index убираем, чтобы не поднимался выше без hover */
+}
+
+.card-on-field.valid-target {
+    border: 3px solid #00ff00 !important;
+    box-shadow: 0 0 15px #00ff00 !important;
+    cursor: pointer !important;
+    z-index: 100 !important; /* Критично: поднимаем над соседними картами */
+    pointer-events: auto !important; /* Критично: разрешаем клик */
+}
+
+@keyframes heroPulseField {
+    0%, 100% {
+        box-shadow: none;
+    }
+    50% {
+        box-shadow: none;
+    }
+}
+
+/* Стили для карт тренеров */
+.coach-card {
+    cursor: pointer !important;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    position: relative;
+    width: 100%;
+    height: 100%;
+    border: 1px dashed rgba(255, 255, 255, 0.25);
+    border-radius: 8px;
+    background: rgba(20, 20, 20, 0.6);
+    backdrop-filter: blur(8px);
+    box-sizing: border-box;
+    -webkit-user-drag: none;
+    user-drag: none;
+    -webkit-user-select: none;
+    user-select: none;
+    
+    /* FIX: Force clickability */
+    pointer-events: auto !important;
+    z-index: 51 !important;
+    touch-action: manipulation !important;
+}
+
+.coach-card img {
+    border-radius: 7px; /* Чуть меньше, чем у родителя, чтобы не перекрывать border */
+    -webkit-user-drag: none;
+    user-drag: none;
+    -webkit-user-select: none;
+    user-select: none;
+    pointer-events: auto; /* На всякий случай, чтобы клики работали */
+}
+
+.coach-card:not(.used):hover {
+    transform: scale(1.15); /* Убрали сдвиг вверх, теперь просто зум */
+    transform-origin: center center;
+    box-shadow: 0 0 25px rgba(255, 215, 0, 0.5); /* Золотое свечение */
+    z-index: 100; /* Чтобы карта была поверх соседей */
+    filter: brightness(1.2); /* Чуть ярче */
+}
+
+.coach-card:not(.used):active {
+    transform: scale(0.95); /* Эффект нажатия кнопки */
+    filter: brightness(0.8);
+}
+
+.coach-card.used {
+    opacity: 0.4 !important;
+    filter: grayscale(100%) !important;
+    cursor: default !important;
+    pointer-events: none !important;
+    transform: none !important;
+    box-shadow: none !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    animation: none !important; /* CRITICAL: Stops the urgent pulse */
+}
+/* Ensure the urgent class cannot override the used class */
+.coach-card.used.coach-urgent {
+    animation: none !important;
+    box-shadow: none !important;
+    border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Стили для уведомлений в табло */
+#scoreboard-notification {
+    position: absolute;
+    top: 0;
+    
+    /* CONSTRAINT: Strictly between the 40px side buttons */
+    left: 45px !important;
+    width: calc(100% - 90px) !important;
+    
+    height: 100%;
+    background: rgba(15, 15, 15, 0.98);
+    border-radius: 8px;
+    
+    /* FLEXBOX CENTERING */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    
+    z-index: 200;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    
+    /* TYPOGRAPHY */
+    font-family: 'CustomHeader', sans-serif;
+    font-size: 11px !important; 
+    line-height: 1.05 !important; /* Slight breathing room */
+    text-align: center;
+    color: #ffffff;
+    
+    /* WRAPPING MAGIC */
+    white-space: normal !important; 
+    text-wrap: balance !important; /* CRITICAL: Balances line lengths */
+    word-wrap: break-word;
+    
+    padding: 0 4px;
+    box-sizing: border-box;
+}
+
+#scoreboard-notification.visible {
+    opacity: 1;
+}
+
+#scoreboard-notification.msg-error {
+    color: #ff4d4d;
+    text-shadow: 0 0 8px rgba(255, 0, 0, 0.4);
+}
+
+#scoreboard-notification.msg-success {
+    color: #00ff00;
+    text-shadow: 0 0 8px rgba(0, 255, 0, 0.4);
+}
+
+#scoreboard-notification.msg-warning {
+    color: #ffd700;
+    text-shadow: 0 0 8px rgba(255, 215, 0, 0.4);
+}
+
+.card-on-field img {
+    width: 100%;
+    height: 100%;
+    object-fit: fill; /* Чтобы мини-карта занимала все пространство токена */
+    border-radius: inherit;
+}
+
+/* Запрет перетаскивания для карт на игровом поле */
+.card-on-field,
+.card-on-field img {
+    -webkit-user-drag: none;
+    user-drag: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+}
+
+/* Update Card Power on Field to be visible */
+.card-on-field .card-power {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid #ffffff;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 10px;
+    color: #ffffff;
+    z-index: 20;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+    font-family: 'CustomHeader', sans-serif;
+}
+
+/* При наведении карта всегда должна быть выше всех */
+.field-row .card-on-field:hover,
+.field-row .card-on-field:active {
+    /* Убрали hover эффекты - теперь используется Inspect Mode */
+    cursor: pointer;
+}
+
+.card-flying {
+    position: fixed;
+    z-index: 1000;
+    pointer-events: none;
+    transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    overflow: visible;
+}
+
+/* Рука соперника - визуализация рубашек карт */
+.opponent-hand {
+    width: 100%;
+    height: auto;
+    display: flex;
+    flex: 1; /* Занимает все доступное пространство */
+    justify-content: center; /* Рука по центру, так как боковых блоков больше нет */
+    align-items: center;
+    overflow: visible; /* Убираем скролл */
+    padding: 0 10px; /* Небольшие отступы по краям */
+    box-sizing: border-box;
+}
+
+/* Рубашка карты соперника */
+.opponent-hand .card-back {
+    width: 53px !important;
+    height: 74px !important;
+    min-width: 53px !important;
+    min-height: 74px !important;
+    flex-shrink: 0; /* Чтобы сама картинка карты не сжималась */
+    background-color: #990000; /* Fallback цвет, если картинка не загрузится */
+    background-image: url('assets/spartak_card_back_enemy.jpg');
+    background-size: cover; /* Чтобы картинка заполняла всю карту */
+    background-repeat: no-repeat;
+    background-position: center;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 4px;
+    box-shadow: none;
+    position: relative;
+    margin-right: -37px;          /* Adjusted overlap */
+    margin-left: 0 !important; /* Убираем левый маргин */
+    transition: margin 0.3s ease; /* Для плавности появления */
+    cursor: default;
+    pointer-events: none;
+}
+
+/* У последней карты нет отрицательного отступа, чтобы она закрывала стопку */
+.opponent-hand .card-back:last-child {
+    margin-right: 0 !important;
+}
+
+/* Убираем старый вопросительный знак */
+.opponent-hand .card-back::before {
+    content: "";
+}
+
+/* --- PLAYER HAND STABLE FIX --- */
+/* --- CARDS CONTAINER (SCROLLABLE HAND) --- */
+.cards-container {
+    /* Positioning */
+    position: fixed !important;
+    bottom: calc(2dvh + 15px) !important;
+    left: 0;
+    width: 100% !important;
+    height: 220px !important;
+    z-index: 90;
+    
+    /* LAYOUT */
+    display: flex;
+    align-items: flex-end !important;
+    justify-content: flex-start !important;
+    flex-wrap: nowrap !important;
+    
+    /* VISUALS */
+    padding: 30px 20px calc(15px + env(safe-area-inset-bottom)) 20px !important;
+    box-sizing: border-box;
+    
+    /* --- CRITICAL: DISABLE NATIVE SCROLL --- */
+    /* We will move this via JS transform/scrollLeft, so native scroll is OFF */
+    overflow-x: hidden !important; 
+    overflow-y: hidden !important;
+    
+    /* Interaction */
+    pointer-events: auto !important;
+    touch-action: none !important; /* Full JS control */
+    cursor: grab;
+    
+    /* Remove scrollbars */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.cards-container:active {
+    cursor: grabbing;
+}
+
+.cards-container::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */ 
+}
+
+/* Стили для кнопки "Пас" */
+#pass-button {
+    background: linear-gradient(135deg, #ff0000, #cc0000);
+    color: #ffffff;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 12px;
+    padding: 15px 30px;
+    font-size: 20px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-transform: uppercase;
+    box-shadow: none;
+}
+
+#pass-button:active:not(:disabled) {
+    transform: translateY(-2px) scale(1.05);
+    box-shadow: none;
+    background: linear-gradient(135deg, #ff3333, #ff0000);
+    border-color: rgba(255, 255, 255, 0.5);
+}
+
+#pass-button:active:not(:disabled) {
+    transform: translateY(0) scale(1);
+    box-shadow: none;
+}
+
+#pass-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background: #666;
+    transform: none;
+}
+
+/* Контейнер карт противника - скрыт, так как карты противника показываются обратной стороной в рядах */
+.enemy-cards-container {
+    display: none;
+}
+
+.enemy-card-back {
+    width: 90px;
+    height: 126px;
+    border-radius: 10px;
+    background: rgba(40, 40, 40, 0.8);
+    backdrop-filter: blur(8px);
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6), 0 2px 4px rgba(0, 0, 0, 0.4);
+    position: relative;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.enemy-card-back::before {
+    content: '?';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 32px;
+    font-weight: bold;
+    color: rgba(255, 255, 255, 0.6);
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+    font-family: 'CustomHeader', sans-serif;
+}
+
+.enemy-card-flipping {
+    transform-style: preserve-3d;
+    transition: transform 0.6s;
+}
+
+.enemy-card-flipping.flip {
+    transform: rotateY(180deg);
+}
+
+@media (max-width: 480px) {
+    .enemy-card-back {
+        width: 70px;
+        height: 98px;
+    }
+    
+    .tactics-slot .card-on-field {
+        width: 100% !important;
+        height: 100% !important;
+        max-width: none !important;
+        max-height: none !important;
+    }
+    
+    .deck-graveyard-column {
+        width: 80px;
+    }
+    
+    .deck-container,
+    .graveyard-container {
+        width: 80px;
+        height: 112px;
+    }
+    
+    .deck-container::after {
+        font-size: 28px;
+    }
+    
+    .graveyard-icon {
+        font-size: 40px;
+    }
+}
+
+@media (max-width: 360px) {
+    .enemy-card-back {
+        width: 60px;
+        height: 84px;
+    }
+    
+    .tactics-slot .card-on-field {
+        width: 100% !important;
+        height: 100% !important;
+        max-width: none !important;
+        max-height: none !important;
+    }
+    
+    .deck-graveyard-column {
+        width: 70px;
+        gap: 6px;
+    }
+    
+    .deck-container,
+    .graveyard-container {
+        width: 70px;
+        height: 98px;
+    }
+    
+    .deck-container::after {
+        font-size: 24px;
+    }
+    
+    .graveyard-icon {
+        font-size: 36px;
+    }
+    
+    .deck-counter {
+        font-size: 12px;
+        padding: 2px 6px;
+        min-width: 20px;
+    }
+}
+
+@media (max-width: 320px) {
+    .deck-graveyard-column {
+        width: 60px;
+    }
+    
+    .deck-container,
+    .graveyard-container {
+        width: 60px;
+        height: 84px;
+    }
+    
+    .deck-container::after {
+        font-size: 20px;
+    }
+    
+    .graveyard-icon {
+        font-size: 32px;
+    }
+}
+
+.game-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.9); /* Slightly darker */
+    backdrop-filter: blur(10px);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    transition: opacity 0.3s ease;
+    
+    /* NUCLEAR Z-INDEX: Must be higher than .card-flying (usually 1000-10000) */
+    z-index: 2147483647 !important; 
+}
+
+.game-overlay.show {
+    display: flex;
+}
+
+/* Оверлей для детального просмотра карт */
+#card-inspection-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(5px);
+    z-index: 20000 !important; /* Must be strictly higher than the graveyard */
+    display: none;
+    justify-content: center;
+    align-items: center;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none; /* Клики проходят сквозь оверлей к картам */
+}
+
+#card-inspection-overlay.show {
+    display: flex !important;
+    opacity: 1;
+}
+
+#inspected-card-image {
+    max-width: 90%;
+    max-height: 80vh;
+    border-radius: 12px;
+    box-shadow: 0 0 40px rgba(255, 255, 255, 0.1);
+    transform: scale(0.5);
+    opacity: 0;
+    transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease;
+}
+
+#card-inspection-overlay.show #inspected-card-image {
+    transform: scale(1);
+    opacity: 1;
+}
+
+#inspected-card-image.pulse {
+    transform: scale(0.92) !important;
+    transition: transform 0.1s ease-in-out;
+}
+
+.game-result-modal {
+    background: rgba(30, 30, 30, 0.95);
+    backdrop-filter: blur(20px);
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-radius: 24px;
+    padding: 50px;
+    text-align: center;
+    max-width: 450px;
+    width: 90%;
+    box-shadow: none;
+}
+
+.game-result-title {
+    font-size: 42px;
+    font-weight: bold;
+    margin-bottom: 25px;
+    text-transform: uppercase;
+    font-family: 'CustomHeader', sans-serif;
+    letter-spacing: 2px;
+    text-shadow: none;
+}
+
+.game-result-title.victory {
+    color: #ffffff;
+    text-shadow: none;
+}
+
+.game-result-title.defeat {
+    color: rgba(200, 200, 200, 0.9);
+    text-shadow: none;
+}
+
+.game-result-title.draw {
+    color: #ffd700;
+    text-shadow: none;
+}
+
+.game-result-score {
+    font-size: 26px;
+    color: #ffffff;
+    margin-bottom: 35px;
+    font-family: 'CustomHeader', sans-serif;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+}
+
+.restart-button {
+    background: linear-gradient(135deg, #ff0000, #cc0000);
+    color: #ffffff;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 12px;
+    padding: 18px 40px;
+    font-size: 22px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    text-transform: uppercase;
+    font-family: 'CustomText', sans-serif;
+    box-shadow: none;
+}
+
+.restart-button:active {
+    transform: translateY(-3px) scale(1.03);
+    box-shadow: none;
+    background: linear-gradient(135deg, #ff3333, #ff0000);
+    border-color: rgba(255, 255, 255, 0.5);
+}
+
+.restart-button:active {
+    transform: translateY(-1px) scale(0.98);
+    box-shadow: none;
+}
+
+@media (max-width: 480px) {
+    .game-result-modal {
+        padding: 30px 20px;
+    }
+    
+    .game-result-title {
+        font-size: 28px;
+    }
+    
+    .game-result-score {
+        font-size: 20px;
+    }
+    
+    .restart-button {
+        font-size: 18px;
+        padding: 12px 25px;
+    }
+}
+
+.cards-container .card {
+    pointer-events: auto;
+    flex-shrink: 0;
+    
+    /* SCALED UP BY 5% */
+    width: 125px !important;
+    height: 174px !important;
+    
+    /* KEEP EXISTING MARGINS */
+    margin-right: -32px;      
+    
+    transition: transform 0.15s cubic-bezier(0.2, 0.8, 0.2, 1), margin-right 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+    transform-origin: center bottom;
+    
+    position: relative;
+    border-radius: 8px;
+    box-shadow: -2px 0 8px rgba(0,0,0,0.4);
+    
+    /* Ensure the card doesn't trap the swipe gesture */
+    touch-action: pan-x !important; 
+    
+    backface-visibility: hidden;
+    transform: translateZ(0);
+}
+
+/* Remove margin from the last card */
+.cards-container .card:last-child {
+    margin-right: 0 !important;
+}
+
+/* Active state (touch/click - мобильные и ПК) */
+.cards-container .card:active {
+    z-index: 1000 !important;
+    box-shadow: 0 -5px 20px rgba(0,0,0,0.7);
+    border-color: rgba(255, 255, 255, 0.8);
+}
+
+/* Hover state (Только для ПК/мыши) */
+@media (hover: hover) {
+    .cards-container .card:hover {
+        z-index: 1000 !important;
+        box-shadow: 0 -5px 20px rgba(0,0,0,0.7);
+        border-color: rgba(255, 255, 255, 0.8);
+    }
+}
+
+/* Карты на поле - увеличенные (уже определены выше в .card-on-field) */
+
+.card img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    border-radius: 8px;
+    -webkit-user-drag: none;
+    user-drag: none;
+    -webkit-user-select: none;
+    user-select: none;
+    pointer-events: auto; /* На всякий случай, чтобы клики работали */
+}
+
+.card-power {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    width: 22px;
+    height: 22px;
+    background: linear-gradient(135deg, #ffd700, #ffed4e);
+    border: 2px solid #ffffff;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 11px;
+    color: #000000;
+    z-index: 5;
+    box-shadow: none;
+    font-family: 'CustomHeader', sans-serif;
+    transition: all 0.3s ease;
+}
+
+.card:active {
+    transform: translateY(-15px) scale(1.1);
+    z-index: 10;
+    position: relative;
+    box-shadow: none;
+    /* border-color удален - тень box-shadow дает нужный эффект нажатия */
+}
+
+.card:active .card-power {
+    transform: scale(1.1);
+    box-shadow: none;
+}
+
+.card.hero {
+    border: 2px solid #ffd700;
+    box-shadow: none;
+    animation: heroPulse 2s ease-in-out infinite;
+}
+
+@keyframes heroPulse {
+    0%, 100% {
+        box-shadow: none;
+    }
+    50% {
+        box-shadow: none;
+    }
+}
+
+.score-board {
+    color: #ffffff;
+    font-size: 20px;
+    font-weight: bold;
+    text-shadow: none;
+    padding: 12px 20px;
+    flex-shrink: 0;
+    font-family: 'CustomHeader', sans-serif;
+    background: rgba(20, 20, 20, 0.6);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    margin: 5px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+    transition: all 0.3s ease;
+}
+
+.score-board:active {
+    background: rgba(30, 30, 30, 0.8);
+    box-shadow: none;
+}
+
+.enemy-score {
+    text-align: right;
+}
+
+@media (max-width: 480px) {
+    .score-board {
+        font-size: 16px;
+    }
+}
+
+@media (max-width: 480px) {
+    /* --- MOBILE HAND FIX --- */
+    .cards-container {
+        /* 1. Massive height to prevent clipping during animations/safe-area shifts */
+        height: 260px !important; 
+        
+        /* 2. MAGIC FIX: Make the container transparent to clicks */
+        /* This allows clicking the Coach through the empty space above cards */
+        pointer-events: none !important; 
+    }
+
+    .cards-container .card {
+        /* SCALED UP BY 5% */
+        width: 87px !important;
+        height: 122px !important;
+        min-width: 87px !important;
+        
+        /* 3. Re-enable clicks on the cards themselves */
+        pointer-events: auto !important;
+        
+        /* Interaction */
+        touch-action: pan-x !important;
+        flex-shrink: 0;
+    }
+    
+    /* Наложение теперь рассчитывается динамически в JS, убираем фиксированное значение */
+}
+
+@media (max-width: 360px) {
+    .cards-container {
+        padding-left: 16px;
+        padding-right: 16px;
+    }
+    
+    .cards-container .card {
+        width: 87px !important;
+        height: 122px !important;
+        min-width: 87px !important;
+        flex-shrink: 0;
+        margin-right: -32px;
+    }
+    
+    .cards-container .card:last-child {
+        margin-right: 0;
+    }
+    
+    .score-board {
+        font-size: 14px;
+    }
+    
+    .field-row {
+        min-height: 45px;
+        max-height: 10vh;
+        padding: 0 4px !important; /* Симметричные отступы для центрирования */
+        justify-content: center !important;
+    }
+    
+    .card-on-field {
+        width: 35px;
+    }
+}
+
+/* Медиа-запрос для совсем маленьких экранов (iPhone SE и т.д.) */
+@media (max-height: 700px) {
+    .field-row {
+        height: 60px !important;
+        min-height: 60px !important;
+    }
+    .tactics-slot {
+        height: 54px !important;
+        width: 38px !important;
+        min-width: 38px !important;
+    }
+}
+
+/* Стили для стартового меню */
+#start-screen {
+    width: 100%;
+    height: 100dvh !important; /* Dynamic Viewport Height */
+    padding-bottom: calc(20px + env(safe-area-inset-bottom)); /* Отступ под черту iPhone */
+    background: url('assets/background_menu.jpg') no-repeat center center;
+    background-size: cover;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+    box-sizing: border-box;
+    transition: opacity 0.3s ease;
+    opacity: 1;
+    position: relative;
+}
+
+#start-screen::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: radial-gradient(circle at 50% 30%, rgba(255, 0, 0, 0.08) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+#start-screen > * {
+    position: relative;
+    z-index: 1;
+}
+
+/* Закомментировано: заменено на логотип-картинку
+#start-screen h1 {
+    color: #ffffff;
+    font-size: 64px;
+    font-weight: bold;
+    text-transform: uppercase;
+    text-shadow: 0 0 30px rgba(255, 0, 0, 0.8), 0 0 60px rgba(255, 0, 0, 0.4), 3px 3px 6px rgba(0, 0, 0, 0.9);
+    margin-bottom: 80px;
+    text-align: center;
+    letter-spacing: 5px;
+    line-height: 1.2;
+}
+*/
+
+/* Стили для логотипа игры */
+.game-logo {
+    width: 88%; /* Адаптивная ширина (увеличено на 10%) */
+    max-width: 385px; /* Ограничение для десктопа (увеличено на 10%) */
+    height: auto;
+    margin-top: 40px; /* Опускаем логотип ниже */
+    margin-bottom: 60px; /* Отступ до кнопок */
+    object-fit: contain;
+    filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.5)); /* Красивая тень */
+    z-index: 10;
+    position: relative;
+}
+
+#start-screen .menu-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 25px;
+    width: 100%;
+    max-width: 450px;
+    background: rgba(20, 20, 20, 0.7);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 20px;
+    padding: 40px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    position: relative;
+    z-index: 100 !important; /* Force on top of any background effects */
+    pointer-events: auto !important; /* Ensure clicks pass through */
+}
+
+#start-screen .menu-button {
+    background: linear-gradient(135deg, #ff0000, #cc0000);
+    color: #ffffff;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 12px;
+    padding: 22px 35px;
+    font-size: 24px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-transform: uppercase;
+    text-shadow: none;
+    box-shadow: none;
+    font-family: 'CustomText', sans-serif;
+    width: 100%;
+    position: relative;
+    z-index: 101; /* Higher than container */
+    pointer-events: auto;
+    overflow: hidden;
+    /* iOS Fix: Forces hardware acceleration and clickability */
+    transform: translateZ(10px);
+}
+
+#start-screen .menu-button::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.2);
+    transform: translate(-50%, -50%);
+    transition: width 0.6s ease, height 0.6s ease;
+}
+
+#start-screen .menu-button:active {
+    transform: translateY(-3px) scale(1.02) translateZ(10px); /* Preserve iOS fix */
+    box-shadow: none;
+    background: linear-gradient(135deg, #ff3333, #ff0000);
+    border-color: rgba(255, 255, 255, 0.5);
+}
+
+#start-screen .menu-button:active::before {
+    width: 300px;
+    height: 300px;
+}
+
+#start-screen .menu-button:active {
+    transform: translateY(-1px) scale(0.98) translateZ(10px); /* Preserve iOS fix */
+    box-shadow: none;
+}
+
+@media (max-width: 480px) {
+    /* Закомментировано: заменено на логотип-картинку
+    #start-screen h1 {
+        font-size: 36px;
+        margin-bottom: 40px;
+    }
+    */
+    
+    .game-logo {
+        width: 82.5%; /* Немного меньше на маленьких экранах (увеличено на 10%) */
+        margin-top: 30px; /* Опускаем логотип ниже */
+        margin-bottom: 40px;
+    }
+    
+    #start-screen .menu-button {
+        font-size: 20px;
+        padding: 18px 25px;
+    }
+}
+
+@media (max-width: 360px) {
+    /* Закомментировано: заменено на логотип-картинку
+    #start-screen h1 {
+        font-size: 28px;
+        margin-bottom: 30px;
+        letter-spacing: 2px;
+    }
+    */
+    
+    .game-logo {
+        width: 77%; /* Еще меньше на очень маленьких экранах (увеличено на 10%) */
+        margin-top: 20px; /* Опускаем логотип ниже */
+        margin-bottom: 30px;
+    }
+    
+    #start-screen .menu-button {
+        font-size: 18px;
+        padding: 15px 20px;
+    }
+}
+
+/* Стили для игрового экрана - Mobile First вертикальный макет */
+#game-screen {
+    display: none;
+    width: 100%;
+    height: 100dvh !important;
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    padding: 0;
+    box-sizing: border-box;
+    overflow: hidden;
+    transition: opacity 0.3s ease;
+    opacity: 1;
+    position: relative;
+    
+    /* CHANGED: Use the image instead of green gradient */
+    background: url('assets/background.jpg') center center / cover no-repeat !important; 
+}
+
+/* Верхняя строка соперника: Колода, Рука, Отбой */
+.opponent-top-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 12px 15px;
+    gap: 16px; /* Отступы между колодой, рукой и отбоем */
+    background: transparent !important; /* Прозрачная панель, чтобы был виден зеленый фон */
+    backdrop-filter: none !important;
+    border-bottom: none !important;
+    box-shadow: none !important;
+    flex-shrink: 0;
+    min-height: 80px; /* Чтобы 56px карты + отступы комфортно влезали */
+    box-sizing: border-box;
+    margin-top: 4dvh !important; /* Опускаем блок соперника вниз */
+    margin-bottom: 2dvh !important; /* Отступ между верхней панелью и защитой соперника */
+}
+
+/* Колода и отбой соперника */
+.deck-slot {
+    width: 40px !important;
+    height: 56px !important;
+    min-width: 40px !important;
+    min-height: 56px !important;
+    background-color: #990000; /* Темно-красный фон (fallback) */
+    background-image: url('assets/spartak_stack.jpg');
+    background-size: cover;
+    background-repeat: no-repeat;
+    background-position: center;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 4px;
+    box-shadow: none;
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-shrink: 0; /* Чтобы они не сплющивались */
+}
+
+.deck-slot::before {
+    content: ""; /* Убираем старый вопросительный знак */
+}
+
+.graveyard-slot {
+    width: 40px !important;
+    height: 56px !important;
+    min-width: 40px !important;
+    min-height: 56px !important;
+    background-color: rgba(40, 40, 40, 0.8); /* Fallback цвет */
+    background-image: url('assets/spartak_graveyard.jpg');
+    background-size: cover;
+    background-repeat: no-repeat;
+    background-position: center;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    box-shadow: none;
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-shrink: 0; /* Чтобы они не сплющивались */
+}
+
+.deck-slot .deck-counter {
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    top: 75%; /* Смещаем ниже, на 3/4 высоты карты */
+    left: 50%; /* Центрирование по горизонтали */
+    transform: translate(-50%, -50%); /* Точное центрирование */
+    bottom: auto !important; /* Сбрасываем старые координаты */
+    right: auto !important; /* Сбрасываем старые координаты */
+    font-family: 'CustomHeader', sans-serif; /* Подставляем наш шрифт вместо SSN 25-26 */
+    font-style: normal;
+    font-weight: 700;
+    font-size: 10px;
+    line-height: 12px;
+    text-align: center;
+    color: #000000;
+    background: transparent !important; /* Убираем белый фон */
+    padding: 0;
+    border: none; /* Убираем border */
+    border-radius: 0;
+    box-shadow: none; /* Убираем box-shadow */
+    min-width: auto;
+    z-index: 10; /* Цифра поверх картинки */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.graveyard-slot .graveyard-icon {
+    display: none; /* Скрываем старую иконку, теперь используется изображение */
+}
+
+/* Центральное Табло (разделитель между зонами) */
+/* Контейнер табло */
+#main-scoreboard.scoreboard-center {
+    display: flex;
+    justify-content: center !important;
+    align-items: center;
+    padding: 0 6px !important;
+    
+    /* CHANGED: Set vertical spacing to 1dvh */
+    margin: 1dvh auto !important; 
+    
+    width: 98%;
+    max-width: 500px;
+    height: 44px !important;
+    box-sizing: border-box;
+    gap: 6px !important; /* Компактный отступ между элементами центра */
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(10px);
+    border-top: 2px solid rgba(255, 255, 255, 0.2);
+    border-bottom: 2px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    flex-shrink: 0;
+}
+
+/* Гарантируем, что логотипы тоже по центру */
+#main-scoreboard.scoreboard-center .team-logo {
+    width: 28px;
+    height: 28px;
+    object-fit: contain;
+    filter: none;
+    flex-shrink: 0;
+    display: block; /* Убираем inline-отступы */
+}
+
+/* ОБНОВЛЕННЫЕ СТИЛИ ДЛЯ ЦЕНТРИРОВАНИЯ ТАБЛО */
+#main-scoreboard.scoreboard-center #current-score-player,
+#main-scoreboard.scoreboard-center #current-score-enemy {
+    font-family: 'CustomHeader', sans-serif;
+    font-size: 22px;
+    font-weight: bold;
+    color: #ffffff;
+    text-shadow: none;
+    min-width: 35px;
+    text-align: center;
+    /* FIX VERTICAL ALIGNMENT */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    height: 100%;
+    padding-top: 3px !important; /* Оптическая коррекция: опускаем текст вниз */
+}
+
+#main-scoreboard.scoreboard-center #match-score {
+    font-family: 'CustomHeader', sans-serif;
+    font-size: 20px !important;
+    font-weight: bold;
+    color: #ffd700;
+    text-shadow: none;
+    min-width: 65px;
+    text-align: center;
+    background: rgba(255, 215, 0, 0.15);
+    border-radius: 6px;
+    border: 2px solid rgba(255, 215, 0, 0.3);
+    /* FIX VERTICAL ALIGNMENT */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3px 8px 0 8px !important; /* 3px сверху, 0 снизу для компенсации */
+    line-height: 1;
+    height: 32px; /* Фиксируем высоту плашки */
+}
+
+/* Общий стиль кнопок */
+.pass-btn-visual,
+.settings-btn-visual {
+    font-family: 'CustomHeader', sans-serif;
+    font-size: 12px; /* Компактный шрифт */
+    font-weight: bold;
+    color: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px; /* Чуть меньше радиус */
+    padding: 0;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+    flex-shrink: 0;
+    
+    /* НОВЫЕ РАЗМЕРЫ */
+    height: 28px !important;
+    width: 40px !important; 
+    min-width: 40px !important;
+    
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Кнопка НАСТРОЙКИ (теперь слева) */
+#ingame-settings-btn {
+    margin-right: auto !important; /* Толкает центр вправо */
+    margin-left: 0 !important;     /* Сброс старого стиля */
+}
+
+/* Кнопка ПАС (теперь справа) */
+#ingame-pass-btn {
+    margin-left: auto !important;  /* Толкает центр влево */
+    margin-right: 0 !important;    /* Сброс старого стиля */
+}
+
+/* Специфика кнопки ПАС */
+.pass-btn-visual {
+    background: linear-gradient(135deg, rgba(200, 50, 50, 0.6), rgba(150, 0, 0, 0.8));
+}
+.pass-btn-visual:active:not(:disabled) {
+    transform: scale(0.95);
+    background: linear-gradient(135deg, rgba(255, 80, 80, 0.8), rgba(200, 0, 0, 1));
+}
+.pass-btn-visual:disabled {
+    opacity: 0.5;
+    filter: grayscale(1);
+    cursor: not-allowed;
+    background: rgba(50, 50, 50, 0.5);
+}
+
+/* Специфика кнопки НАСТРОЙКИ */
+.settings-btn-visual {
+    background: rgba(255, 255, 255, 0.1); /* Нейтральный фон */
+    font-size: 16px; /* Иконка чуть крупнее текста */
+}
+.settings-btn-visual:active {
+    transform: scale(0.95) rotate(45deg); /* Эффект поворота при нажатии */
+    background: rgba(255, 255, 255, 0.2);
+}
+
+/* Адаптив для маленьких экранов */
+@media (max-width: 380px) {
+    .pass-btn-visual,
+    .settings-btn-visual {
+        width: 36px; /* Еще меньше на маленьких экранах */
+        height: 26px !important;
+        font-size: 11px;
+    }
+    .settings-btn-visual {
+        font-size: 14px;
+    }
+    
+    /* Сжимаем логотипы и счет, чтобы влезли кнопки */
+    #main-scoreboard .team-logo {
+        width: 24px;
+        height: 24px;
+    }
+    #current-score-player, 
+    #current-score-enemy {
+        min-width: 20px; /* Уменьшаем минимальную ширину цифр */
+        font-size: 20px;
+    }
+    #match-score {
+        min-width: 50px;
+        font-size: 18px !important;
+        padding: 2px 4px !important;
+    }
+}
+
+/* Адаптив: на очень узких экранах уменьшаем отступы в центре */
+@media (max-width: 360px) {
+    #main-scoreboard.scoreboard-center {
+        gap: 3px !important;
+    }
+}
+
+/* Игровое поле (Board) - центральная часть с темно-зеленым фоном */
+.game-board {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    background: transparent !important;
+    min-height: 0;
+    
+    overflow-y: auto; /* Enable scrolling */
+    overflow-x: hidden;
+    position: relative;
+    
+    /* Increased bottom padding to prevent overlap */
+    padding: 0 16px calc(200px + env(safe-area-inset-bottom)) 16px !important;
+    
+    gap: 0 !important;
+    box-sizing: border-box;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+}
+
+.game-board > * {
+    position: relative;
+    z-index: 1;
+}
+
+#game-screen::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    /* REMOVED: Old repeating-linear-gradient texture */
+    background: none !important; 
+    pointer-events: none;
+    z-index: 0;
+    display: none !important; /* Hide overlay so the jpg is clearly visible */
+}
+
+#game-screen > * {
+    position: relative;
+    z-index: 1;
+}
+
+#game-screen.show {
+    display: flex;
+}
+
+/* Стили для экрана выбора команды */
+#faction-screen {
+    display: none;
+    width: 100%;
+    height: 100dvh !important; /* Dynamic Viewport Height */
+    padding-bottom: calc(20px + env(safe-area-inset-bottom)); /* Отступ под черту iPhone */
+    background: url('assets/background_menu.jpg') no-repeat center center;
+    background-size: cover;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+    box-sizing: border-box;
+    transition: opacity 0.3s ease;
+    opacity: 1;
+    position: relative;
+    overflow-y: auto; /* Allow vertical scroll for squad grid and collection */
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain; /* Prevent rubber banding */
+    touch-action: pan-y; /* Разрешаем вертикальный свайп внутри этого блока */
+}
+
+#faction-screen::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: radial-gradient(circle at 50% 30%, rgba(255, 0, 0, 0.08) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+#faction-screen > * {
+    position: relative;
+    z-index: 1;
+}
+
+/* Секции выбора команды */
+.faction-section {
+    width: 100%;
+    max-width: 600px;
+    margin-bottom: 30px;
+}
+
+.faction-section-title {
+    color: #ffffff;
+    font-size: 24px;
+    font-weight: bold;
+    text-transform: uppercase;
+    text-align: center;
+    margin-bottom: 20px;
+    letter-spacing: 2px;
+    font-family: 'CustomHeader', sans-serif;
+}
+
+/* Сетка команд */
+.faction-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+    width: 100%;
+}
+
+/* Квадратные блоки команд */
+.faction-square {
+    aspect-ratio: 1 / 1;
+    background: rgba(30, 30, 30, 0.7);
+    backdrop-filter: blur(10px);
+    border: 2px solid rgba(255, 255, 255, 0.15);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.faction-square img {
+    width: 80%;
+    height: 80%;
+    object-fit: contain;
+    filter: grayscale(100%);
+    transition: filter 0.3s ease, transform 0.3s ease;
+}
+
+.faction-square.locked {
+    cursor: not-allowed;
+    opacity: 0.5;
+    background: rgba(20, 20, 20, 0.5);
+}
+
+.faction-square.locked .lock-icon {
+    font-size: 32px;
+    color: rgba(255, 255, 255, 0.3);
+}
+
+/* Состояние выбранной команды */
+.faction-square.selected {
+    border-color: #4CAF50;
+    border-width: 3px;
+    transform: scale(1.05);
+    box-shadow: 0 4px 16px rgba(76, 175, 80, 0.4);
+}
+
+.faction-square.selected img {
+    filter: grayscale(0%);
+    transform: scale(1.1);
+}
+
+.faction-square:active:not(.locked) {
+    transform: scale(0.95);
+}
+
+/* Стили для квадратов выбора в модальном окне РПЛ */
+#rpl-choice-overlay .faction-square {
+    cursor: pointer;
+}
+
+#rpl-choice-overlay .faction-square:hover {
+    border-color: rgba(255, 255, 255, 0.4);
+    transform: scale(1.05);
+    box-shadow: 0 4px 16px rgba(255, 215, 0, 0.3);
+}
+
+#rpl-choice-overlay .faction-square:hover img {
+    filter: grayscale(0%);
+    transform: scale(1.1);
+}
+
+#rpl-choice-overlay .faction-square:active {
+    transform: scale(0.95);
+}
+
+/* Разделитель VS */
+.faction-vs-divider {
+    color: #ffffff;
+    font-size: 32px;
+    font-weight: bold;
+    text-align: center;
+    margin: 20px 0;
+    text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+    font-family: 'CustomHeader', sans-serif;
+    letter-spacing: 4px;
+}
+
+/* Футер с кнопками */
+.faction-footer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 15px;
+    width: 100%;
+    max-width: 600px;
+    margin-top: 20px;
+}
+
+#btn-faction-next {
+    width: 100%;
+    max-width: 300px;
+    padding: 18px 40px;
+    font-size: 20px;
+    font-weight: bold;
+    text-transform: uppercase;
+    border-radius: 12px;
+    transition: all 0.3s ease;
+    font-family: 'CustomText', sans-serif;
+}
+
+#btn-faction-next:disabled {
+    background: rgba(100, 100, 100, 0.5) !important;
+    color: rgba(255, 255, 255, 0.5) !important;
+    border: 2px solid rgba(255, 255, 255, 0.2) !important;
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+#btn-faction-next:not(:disabled) {
+    background: linear-gradient(135deg, #4CAF50, #45a049) !important;
+    color: #ffffff !important;
+    border: 2px solid rgba(255, 255, 255, 0.3) !important;
+    box-shadow: 0 4px 15px rgba(76, 175, 80, 0.4);
+    cursor: pointer;
+}
+
+#btn-faction-next:not(:disabled):active {
+    transform: scale(0.98);
+    box-shadow: 0 2px 8px rgba(76, 175, 80, 0.6);
+}
+
+.back-button {
+    /* Позиционирование и размер */
+    min-width: 140px;
+    width: auto;
+    padding: 12px 30px;
+    margin-top: 20px;
+    margin-bottom: 20px;
+    
+    /* Типографика (как просил пользователь - обычный шрифт) */
+    font-family: 'CustomText', sans-serif !important; 
+    font-size: 18px;
+    font-weight: normal; /* Не жирный, чтобы отличаться от игровых кнопок */
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: rgba(255, 255, 255, 0.7) !important; /* Чуть приглушенный белый */
+    
+    /* Визуал (Стекло) */
+    background: rgba(0, 0, 0, 0.3) !important; /* Темная подложка */
+    backdrop-filter: blur(5px);
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    border-radius: 50px !important; /* Овальная форма (Pill shape) */
+    
+    /* Интерактивность */
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px; /* Отступ для стрелочки */
+    
+    /* Убираем стили menu-button, если они наследуются */
+    box-shadow: none !important;
+}
+
+/* Добавляем стрелочку через CSS */
+.back-button::before {
+    content: '←';
+    font-family: system-ui, sans-serif; /* Для стрелки берем системный шрифт */
+    font-size: 20px;
+    transition: transform 0.3s ease;
+    margin-top: -2px; /* Микро-коррекция высоты */
+}
+
+/* Эффекты при наведении и нажатии */
+.back-button:active,
+.back-button:hover {
+    background: rgba(255, 255, 255, 0.1) !important;
+    border-color: rgba(255, 255, 255, 0.6) !important;
+    color: #ffffff !important;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* Анимация стрелочки при наведении */
+.back-button:active::before,
+.back-button:hover::before {
+    transform: translateX(-5px);
+}
+
+@media (max-width: 768px) {
+    .faction-section-title {
+        font-size: 20px;
+        margin-bottom: 15px;
+    }
+    
+    .faction-grid {
+        gap: 6px;
+    }
+    
+    .faction-vs-divider {
+        font-size: 28px;
+        margin: 15px 0;
+    }
+    
+    #btn-faction-next {
+        font-size: 18px;
+        padding: 15px 30px;
+    }
+}
+
+@media (max-width: 480px) {
+    #faction-screen {
+        padding: 20px;
+    }
+    
+    .faction-section {
+        margin-bottom: 20px;
+    }
+    
+    .faction-section-title {
+        font-size: 18px;
+        margin-bottom: 12px;
+    }
+    
+    .faction-grid {
+        gap: 5px;
+    }
+    
+    .faction-square .lock-icon {
+        font-size: 24px;
+    }
+    
+    .faction-vs-divider {
+        font-size: 24px;
+        margin: 12px 0;
+    }
+    
+    .faction-footer {
+        gap: 12px;
+        margin-top: 15px;
+    }
+    
+    #btn-faction-next {
+        font-size: 16px;
+        padding: 12px 25px;
+    }
+    
+    .back-button {
+        padding: 10px 25px;
+        font-size: 16px;
+        min-width: 120px;
+    }
+}
+
+/* Reuse Faction Screen styles for Collection Select */
+#collection-faction-screen {
+    width: 100%;
+    height: 100dvh !important;
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+    background: url('assets/background_menu.jpg') no-repeat center center;
+    background-size: cover;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+    box-sizing: border-box;
+    transition: opacity 0.3s ease;
+    opacity: 1;
+    position: relative;
+    z-index: 10;
+}
+
+#collection-faction-screen::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: radial-gradient(circle at 50% 30%, rgba(255, 0, 0, 0.08) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+#collection-faction-screen > * {
+    position: relative;
+    z-index: 1;
+}
+
+/* Стили для экрана управления составом */
+#squad-screen {
+    display: none; /* Hidden by default, JavaScript sets display: flex when showing */
+    background: url('assets/background_menu.jpg') no-repeat center center !important;
+    background-size: cover !important;
+    border: none !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    margin-top: 0 !important;
+    height: 100dvh !important; /* Dynamic Viewport Height */
+    
+    /* More air on top */
+    padding-top: calc(env(safe-area-inset-top) + 60px) !important;
+    
+    /* More air on sides (32px) -> shrinks the grid columns */
+    padding-left: 32px !important;
+    padding-right: 32px !important;
+    
+    /* More air on bottom */
+    padding-bottom: calc(40px + env(safe-area-inset-bottom)) !important;
+    
+    width: 100% !important;
+    max-width: 600px; /* Ограничиваем ширину на широких экранах */
+    margin: 0 auto; /* Центрируем на широких экранах */
+    flex-direction: column; /* Applied when JavaScript sets display: flex */
+    align-items: center;
+    justify-content: flex-start;
+    
+    /* Tighter vertical spacing */
+    gap: 15px !important;
+    
+    box-sizing: border-box;
+    transition: opacity 0.3s ease;
+    opacity: 1;
+    overflow: hidden !important; /* CRITICAL: Locks the screen */
+    position: relative; /* Чтобы фон точно перекрывал всё, что под ним */
+    z-index: 1;
+}
+
+#squad-screen::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: radial-gradient(circle at 50% 30%, rgba(255, 0, 0, 0.08) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+#squad-screen > * {
+    position: relative;
+    z-index: 1;
+}
+
+#squad-screen h1 {
+    color: #ffffff;
+    font-size: 32px !important; /* Was 36px */
+    font-weight: bold;
+    text-transform: uppercase;
+    text-shadow: 0 4px 10px rgba(0, 0, 0, 0.8);
+    margin: 0 !important;
+    text-align: center;
+    letter-spacing: 4px;
+    line-height: 1.1;
+}
+
+.squad-stats {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 40px;
+    width: 100%;
+    margin-bottom: 10px !important; /* Сокращаем отступ снизу */
+    padding: 0 10px;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+}
+
+.squad-back-btn {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 50%;
+    color: white;
+    font-size: 20px;
+    font-weight: bold;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+    transition: transform 0.1s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.squad-back-btn:active {
+    transform: scale(0.9);
+}
+
+.squad-timer-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 5px 15px;
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.squad-timer-label {
+    color: white;
+    font-size: 14px !important; /* Was 16px */
+    font-weight: bold;
+    margin: 0;
+}
+
+#squad-timer {
+    color: #ff0000;
+    font-size: 22px !important; /* Was 24px */
+    font-weight: bold;
+    text-shadow: 0 0 10px rgba(255, 0, 0, 0.5);
+    min-width: auto;
+    text-align: center;
+    font-family: 'CustomHeader', sans-serif;
+}
+
+.squad-counters {
+    display: flex;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 8px 15px;
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.squad-counters span {
+    color: white;
+    font-size: 14px !important; /* Was 16px */
+    font-weight: bold;
+    font-family: 'CustomHeader', sans-serif;
+    margin: 0;
+}
+
+#subs-counter.green {
+    color: #00ff00;
+}
+
+#subs-counter.red {
+    color: #ff0000;
+    font-weight: bold;
+    text-shadow: 0 0 10px rgba(255, 0, 0, 0.8);
+}
+
+/* --- SQUAD SCREEN FIXES --- */
+#squad-screen, 
+#squad-grid, 
+.squad-card, 
+.squad-card img {
+    -webkit-user-select: none !important;
+    user-select: none !important;
+    -webkit-touch-callout: none !important; /* Disable iOS context menu/selection */
+    -webkit-user-drag: none !important;
+    touch-action: pan-y !important; /* Allow scroll but prevent other gestures */
+}
+
+#squad-grid {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px !important; 
+    padding: 24px 14px !important; 
+    padding-bottom: 120px !important; 
+    
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    margin: 0;
+    background: transparent !important;
+    border: none !important;
+    flex: 1;
+    
+    /* HIDE SCROLLBAR */
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge */
+}
+
+#squad-grid::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
+}
+
+.squad-card {
+    position: relative;
+    z-index: 1;
+    overflow: visible; /* Чтобы тени и зум не резались */
+    width: 100%;
+    height: auto;
+    aspect-ratio: 5 / 7;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), border-color 0.2s ease;
+    transform-origin: center center;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6), 0 2px 4px rgba(0, 0, 0, 0.4);
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    flex-shrink: 0;
+}
+
+.squad-card img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    border-radius: 5px;
+}
+
+.squad-card:active {
+    transform: scale(0.95);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.8), 0 4px 15px rgba(255, 0, 0, 0.3);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+/* Выбранная карта должна быть поверх всех */
+.squad-card.selected-swap {
+    transform: scale(1.1) !important;
+    z-index: 100 !important;
+    box-shadow: 0 15px 35px rgba(0,0,0,0.8) !important;
+    border-color: #ffffff !important;
+    border: 3px solid #ffffff !important;
+}
+
+/* Старые анимации удалены - заменены на статичную иконку замены */
+
+/* Стили для заблокированных карт (полученных в результате замены) */
+.squad-card.replaced-card {
+    opacity: 1 !important; /* Контейнер полностью виден */
+    filter: none !important;
+    border-color: rgba(255, 255, 255, 0.3) !important;
+    cursor: default !important;
+    pointer-events: none; /* Блокируем клики */
+    position: relative;
+}
+
+/* Применяем затемнение ТОЛЬКО к картинке внутри */
+.squad-card.replaced-card img {
+    opacity: 0.6; /* Фото игрока тускнеет */
+    filter: grayscale(20%); /* Чуть обесцвечиваем для эффекта "фиксированности" */
+}
+
+.squad-card.replaced-card:active {
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+/* Иконка замены - зеленый кружок со стрелочками */
+.squad-card.replaced-card::after {
+    content: '⇄'; /* Юникод символ стрелочек замены */
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    width: 26px;
+    height: 26px;
+    background: #00cc00; /* Зеленый фон (цвет замены в футболе) */
+    border: 2px solid #ffffff; /* Белая обводка, чтобы отделить от карты */
+    border-radius: 50%; /* Круг */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    color: #ffffff;
+    font-size: 16px;
+    font-weight: bold;
+    line-height: 1;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+    z-index: 20;
+}
+
+/* Стиль для состояния, когда замены кончились (класс на контейнере) */
+#squad-grid.limit-reached .squad-card {
+    opacity: 1 !important;
+    filter: none !important;
+    cursor: default !important;
+}
+
+/* Когда лимит исчерпан, возвращаем яркость картинке */
+#squad-grid.limit-reached .squad-card img {
+    opacity: 1 !important;
+    filter: none !important;
+}
+
+/* При этом убираем возможность кликать/выделять при лимите */
+#squad-grid.limit-reached .squad-card:active {
+    transform: none !important;
+}
+
+@keyframes cardArrival {
+    0% {
+        opacity: 0;
+        transform: scale(0.7) translateY(-30px) rotate(-5deg);
+    }
+    50% {
+        transform: scale(1.12) translateY(-12px) rotate(2deg);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1) translateY(0) rotate(0deg);
+    }
+}
+
+@keyframes card-arrival {
+    0% {
+        transform: translateY(-300px) rotateY(180deg);
+        opacity: 0;
+    }
+    100% {
+        transform: translateY(0) rotateY(0deg);
+        opacity: 1;
+    }
+}
+
+.card-arrival {
+    animation: card-arrival 0.8s ease-out forwards;
+}
+
+/* Старый стиль для just-arrived удален */
+
+.squad-card .card-power {
+    position: absolute;
+    top: 5px;
+    left: 5px;
+    width: 24px;
+    height: 24px;
+    background: linear-gradient(135deg, #ffd700, #ffed4e);
+    border: 2px solid white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 12px;
+    color: #000;
+    z-index: 5;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+
+@media (max-width: 768px) {
+    #squad-screen {
+        width: 100% !important;
+        height: 100vh !important;
+        padding-top: calc(env(safe-area-inset-top) + 40px) !important;
+        padding-left: 24px !important;
+        padding-right: 24px !important;
+        padding-bottom: calc(30px + env(safe-area-inset-bottom)) !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
+    
+    #squad-screen h1 {
+        font-size: 32px;
+        margin: 0 !important; /* Spacing handled by parent gap */
+    }
+    
+    .squad-stats {
+        gap: 15px;
+        flex-direction: row;
+        margin-bottom: 15px;
+    }
+    
+    .squad-timer-wrapper,
+    .squad-counters {
+        padding: 5px 10px;
+    }
+    
+    .squad-timer-label,
+    #subs-counter {
+        font-size: 14px;
+    }
+    
+    #squad-timer {
+        font-size: 20px;
+    }
+    
+    #squad-screen h1 {
+        font-size: 28px;
+        margin-bottom: 15px;
+    }
+    
+    #squad-grid {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+    }
+    
+    .squad-card {
+        width: 100%;
+        height: auto;
+        aspect-ratio: 5 / 7;
+    }
+    
+}
+
+@media (max-width: 480px) {
+    #squad-screen {
+        width: 100% !important;
+        padding-top: calc(env(safe-area-inset-top) + 40px) !important;
+        padding-left: 24px !important;
+        padding-right: 24px !important;
+        padding-bottom: calc(30px + env(safe-area-inset-bottom)) !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
+    
+    #squad-screen h1 {
+        font-size: 32px !important; /* Adjusted for mobile */
+        margin: 0 !important; /* Spacing handled by parent gap */
+    }
+    
+    .squad-stats {
+        gap: 15px;
+        flex-direction: row;
+        margin-bottom: 15px;
+    }
+    
+    .squad-timer-wrapper,
+    .squad-counters {
+        padding: 5px 10px;
+    }
+    
+    .squad-timer-label,
+    #subs-counter {
+        font-size: 14px;
+    }
+    
+    #squad-timer {
+        font-size: 20px;
+    }
+    
+    #squad-grid {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px !important; /* Уменьшаем gap для более плотного расположения */
+    }
+    
+    .squad-card {
+        width: 100%;
+        height: auto;
+        aspect-ratio: 5 / 7;
+    }
+}
+
+/* Add media query for very small screens if needed */
+@media (max-width: 375px) {
+    #squad-screen {
+        padding-left: 16px !important;
+        padding-right: 16px !important;
+    }
+    #squad-screen h1 {
+        font-size: 28px !important;
+    }
+}
+
+/* Стили для экрана коллекции - первый уровень */
+#collection-screen {
+    display: none;
+    width: 100%;
+    height: 100dvh !important; /* Dynamic Viewport Height */
+    padding-bottom: calc(20px + env(safe-area-inset-bottom)); /* Отступ под черту iPhone */
+    background: url('assets/background_menu.jpg') no-repeat center center;
+    background-size: cover;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    box-sizing: border-box;
+    transition: opacity 0.3s ease;
+    opacity: 1;
+}
+
+#collection-screen h1 {
+    color: #ff0000;
+    font-size: 42px;
+    font-weight: bold;
+    text-transform: uppercase;
+    text-shadow: 0 0 20px rgba(255, 0, 0, 0.8), 2px 2px 4px rgba(0, 0, 0, 0.9);
+    margin-bottom: 50px;
+    text-align: center;
+    letter-spacing: 3px;
+}
+
+/* Стили для экрана коллекции - второй уровень (карты) */
+#collection-cards-screen {
+    display: none;
+    width: 100%;
+    height: 100dvh; /* Use dvh for better mobile support */
+    background: url('assets/background_menu.jpg') no-repeat center center;
+    background-size: cover;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 20px;
+    padding-bottom: 100px; /* Extra space at bottom so content doesn't overlap */
+    box-sizing: border-box;
+    transition: opacity 0.3s ease;
+    opacity: 1;
+    overflow-y: auto !important; /* Allow vertical scroll - parent container scrolls */
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain; /* Prevent rubber banding */
+    touch-action: pan-y !important; /* Разрешаем вертикальный свайп внутри этого блока */
+}
+
+#collection-cards-screen h1 {
+    color: #ff0000;
+    font-size: 36px;
+    font-weight: bold;
+    text-transform: uppercase;
+    text-shadow: 0 0 20px rgba(255, 0, 0, 0.8), 2px 2px 4px rgba(0, 0, 0, 0.9);
+    margin-bottom: 30px;
+    text-align: center;
+    letter-spacing: 2px;
+}
+
+/* --- COLLECTION GRID (Clean Layout) --- */
+#collection-cards-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr) !important; /* 4 Columns */
+    grid-auto-rows: max-content !important; /* Rows expand based on content (no overlap) */
+    gap: 12px !important; /* Space between cards */
+    
+    width: 100%;
+    padding: 20px;
+    padding-bottom: 100px !important; /* Extra space at bottom for scrolling */
+    box-sizing: border-box;
+    
+    /* Reset legacy styles */
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    max-width: none !important;
+    margin-bottom: 0 !important;
+}
+
+/* Ensure the card container fits the grid cell */
+#collection-cards-grid .collection-card {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 5 / 7;
+    margin: 0 !important; /* Remove any negative margins */
+    transform: none !important; /* Remove scaling quirks */
+    box-shadow: 0 4px 10px rgba(0,0,0,0.5); /* Clean shadow */
+    border-radius: 10px;
+    overflow: hidden;
+    cursor: pointer;
+    position: relative;
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    max-width: none !important;
+}
+
+#collection-cards-grid .collection-card img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    border-radius: 8px;
+}
+
+/* Disable hover/active scaling effects to prevent clipping */
+#collection-cards-grid .collection-card:active {
+    transform: none !important; /* Stop cards from growing */
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important; /* Keep a static shadow */
+    z-index: 1 !important; /* Don't try to pop over siblings */
+    border-color: rgba(255, 255, 255, 0.4); /* Optional: just highlight border slightly */
+}
+
+/* HIDE POWER BADGES IN COLLECTION */
+#collection-cards-grid .card-power {
+    display: none !important;
+}
+
+/* Legacy collection-card styles for other contexts (if any) */
+.collection-card {
+    width: 100%;
+    aspect-ratio: 5 / 7;
+    max-width: 140px;
+    border-radius: 10px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6), 0 2px 4px rgba(0, 0, 0, 0.4);
+    position: relative;
+    border: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+.collection-card img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    border-radius: 8px;
+}
+
+.collection-card:active {
+    transform: translateY(-8px) scale(1.08);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.8), 0 4px 15px rgba(255, 0, 0, 0.4);
+    border-color: rgba(255, 0, 0, 0.6);
+}
+
+.collection-card .card-power {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    width: 26px;
+    height: 26px;
+    background: linear-gradient(135deg, #ffd700, #ffed4e);
+    border: 2px solid #ffffff;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 12px;
+    color: #000000;
+    z-index: 5;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5), 0 0 8px rgba(255, 215, 0, 0.4);
+    font-family: 'CustomHeader', sans-serif;
+    transition: all 0.3s ease;
+}
+
+.collection-card:active .card-power {
+    transform: scale(1.1);
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.6), 0 0 12px rgba(255, 215, 0, 0.6);
+}
+
+.collection-card.hero {
+    border: 2px solid #ffd700;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6), 0 0 15px rgba(255, 215, 0, 0.4);
+    animation: heroPulseCollection 2s ease-in-out infinite;
+}
+
+@keyframes heroPulseCollection {
+    0%, 100% {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6), 0 0 15px rgba(255, 215, 0, 0.4);
+    }
+    50% {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6), 0 0 25px rgba(255, 215, 0, 0.7), 0 0 35px rgba(255, 215, 0, 0.4);
+    }
+}
+
+/* Анимация прилета карты на поле */
+.card-fly-in {
+    animation: flyInFromTop 0.5s ease-out forwards;
+}
+
+@keyframes flyInFromTop {
+    0% {
+        opacity: 0;
+        transform: translateY(-200px) scale(0.5);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@media (max-width: 768px) {
+    #collection-cards-grid {
+        grid-template-columns: repeat(4, 1fr) !important;
+        gap: 10px !important;
+        padding: 15px;
+        padding-bottom: 100px !important;
+    }
+    
+    .collection-card {
+        max-width: none !important; /* Allow filling the grid cell */
+    }
+}
+
+@media (max-width: 480px) {
+    #collection-screen h1,
+    #collection-cards-screen h1 {
+        font-size: 28px;
+        margin-bottom: 30px;
+    }
+    
+    #collection-cards-grid {
+        grid-template-columns: repeat(4, 1fr) !important;
+        gap: 8px !important;
+        padding: 10px;
+        padding-bottom: 100px !important;
+    }
+    
+    .collection-card {
+        max-width: none !important; /* Allow filling the grid cell */
+    }
+}
+
+/* ============================================
+   GRAVEYARD VIEW OVERLAY
+   ============================================ */
+
+#graveyard-view-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(5px);
+    z-index: 10000;
+    display: none;
+    flex-direction: column; /* Stack content and button vertically */
+    justify-content: center; /* Centers the whole group vertically */
+    align-items: center;
+    gap: 20px; /* Fixed spacing between box and button */
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+}
+
+#graveyard-view-overlay.show {
+    display: flex;
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.graveyard-modal-content {
+    position: relative;
+    background: rgba(30, 30, 30, 0.95); /* Dark background for the rectangle */
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-radius: 16px;
+    padding: 20px; /* Balanced padding */
+    max-width: 500px;
+    width: 85%;
+    margin: 0; /* Remove auto margins so flex gap works */
+    backdrop-filter: blur(10px);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+    box-sizing: border-box;
+    height: auto; /* Allow it to shrink */
+    max-height: 70vh; /* Limit max height to ~70% of screen, accommodates ~4 rows comfortably */
+    display: flex; /* Handle internal layout */
+    flex-direction: column; /* Stack children vertically */
+    overflow: visible !important; /* Allow score predictor to be visible */
+    pointer-events: auto !important; /* CRITICAL: Ensures clicks work */
+    flex-shrink: 1; /* Allows it to shrink if screen is small */
+}
+
+#btn-graveyard-back {
+    /* Visuals */
+    background: linear-gradient(135deg, #ff0000, #cc0000);
+    color: #ffffff;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 12px;
+    padding: 15px 40px;
+    font-size: 20px;
+    font-weight: bold;
+    font-family: 'CustomText', sans-serif;
+    text-transform: uppercase;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
+    
+    /* Layout */
+    width: auto;
+    min-width: 200px;
+    margin-top: 20px;
+    
+    /* INTERACTION FIXES - CRITICAL */
+    position: relative; 
+    z-index: 2147483647 !important; /* Max Z-Index */
+    pointer-events: auto !important; /* Force enable clicks */
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+#btn-graveyard-back:active {
+    transform: scale(0.95);
+    background: linear-gradient(135deg, #ff3333, #ff0000);
+}
+
+#graveyard-grid {
+    display: grid;
+    /* Force exactly 3 columns that share available space equally */
+    grid-template-columns: repeat(3, 1fr); 
+    grid-auto-rows: max-content; /* CRITICAL: prevents rows from collapsing */
+    gap: 15px; /* Keep consistent spacing */
+    width: 100%;
+    box-sizing: border-box; /* Ensure padding doesn't cause overflow */
+    align-content: start; /* Ensure align-content: start is set */
+    padding: 0; /* Remove padding since parent has padding now */
+    padding-bottom: 10px; /* Better scrolling experience */
+    overflow-x: hidden; /* Disable horizontal scroll */
+    overflow-y: auto; /* Ensure overflow-y: auto is set */
+    flex: 1; /* Allow grid to grow within flex parent, but grid-auto-rows prevents compression */
+    min-height: 0; /* Crucial flexbox fix for scrolling */
+    -webkit-overflow-scrolling: touch;
+    /* Hide scrollbars visually */
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge */
+}
+
+/* Hide scrollbars for Chrome/Safari */
+#graveyard-grid::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
+}
+
+/* Ensure the cards inside fill their grid cells */
+#graveyard-grid .collection-card {
+    width: 100%;
+    max-width: none; /* Allow card to fill the column width */
+    aspect-ratio: 5 / 7;
+    cursor: pointer; /* Inspection hint */
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-user-drag: none;
+}
+
+/* Disable hover/active scaling effects to prevent clipping */
+#graveyard-grid .collection-card:hover,
+#graveyard-grid .collection-card:active {
+    transform: none !important; /* Stop cards from growing */
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important; /* Keep a static shadow */
+    z-index: 1 !important; /* Don't try to pop over siblings */
+    border-color: rgba(255, 255, 255, 0.4); /* Optional: just highlight border slightly */
+}
+
+/* Prevent selection and dragging for images in graveyard grid */
+#graveyard-grid img {
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-user-drag: none;
+    cursor: pointer; /* Inspection hint */
+}
+
+/* Graveyard Cover Card (first item - just image, no frame) */
+.graveyard-cover-card {
+    width: 100%;
+    aspect-ratio: 5 / 7;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+}
+
+.graveyard-cover-card img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+/* Hide power indicator in graveyard view */
+#graveyard-view-overlay .card-power {
+    display: none !important;
+}
+
+/* Overlay fade-out animation for resurrection */
+.overlay-fade-out {
+    opacity: 0 !important;
+    transition: opacity 0.5s ease-in-out !important;
+    pointer-events: none !important;
+}
+
+/* Flying resurrection card animation */
+.flying-resurrection-card {
+    position: fixed;
+    z-index: 99999; /* Must be above everything, including the fading overlay */
+    pointer-events: none;
+    transition: all 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94); /* Smooth, slightly "heavy" ease-out curve */
+    transform-origin: center center;
+    
+    /* Match standard card dimensions */
+    width: 90px;
+    height: 126px;
+    
+    /* Card styling to match .card */
+    border-radius: 8px;
+    box-shadow: -2px 0 8px rgba(0, 0, 0, 0.4);
+    overflow: hidden;
+    backface-visibility: hidden;
+    transform: translateZ(0);
+}
+
+.flying-resurrection-card img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    border-radius: 8px;
+    -webkit-user-drag: none;
+    user-drag: none;
+    -webkit-user-select: none;
+    user-select: none;
+    pointer-events: none;
+}
+
+/* Medic ability selection mode */
+#graveyard-grid.graveyard-select-mode .collection-card:not(.card-disabled) {
+    cursor: pointer;
+}
+
+/* Disabled cards (invalid targets: Heroes, Medics, Tactics) */
+.card-disabled {
+    opacity: 0.4 !important; /* Semi-transparent */
+    filter: none !important; /* Remove grayscale */
+    pointer-events: none; /* Not clickable */
+    cursor: default;
+}
+
+/* Status message for graveyard selection */
+#graveyard-status-text {
+    color: #ffffff;
+    font-weight: bold;
+    text-align: center;
+    margin-bottom: 15px;
+    font-family: 'CustomHeader', sans-serif;
+    font-size: 18px;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+}
+
+/* Base Style for Medic Button (Positioning & Dimensions) */
+#btn-medic-action {
+    /* Layout - aligned with Back button */
+    width: auto;
+    min-width: 220px;
+    margin-top: 20px;
+    padding: 15px 30px;
+    
+    /* Typography (Matches Start Menu) */
+    font-family: 'CustomText', sans-serif;
+    font-size: 20px;
+    font-weight: bold;
+    text-transform: uppercase;
+    text-align: center;
+    
+    /* CRITICAL INTERACTION FIXES */
+    position: relative;
+    z-index: 2147483647 !important; /* Max Z-Index */
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 12px;
+}
+
+/* STATE 1: Waiting / Disabled (Gray Gradient) */
+#btn-medic-action.medic-state-disabled {
+    background: linear-gradient(135deg, #4a4a4a 0%, #2b2b2b 100%) !important;
+    border: 2px solid rgba(255, 255, 255, 0.15) !important;
+    color: rgba(255, 255, 255, 0.4) !important;
+    box-shadow: none !important;
+    cursor: not-allowed !important;
+    pointer-events: none !important; /* Not clickable yet */
+    transform: scale(0.98);
+}
+
+/* STATE 2: Active / Confirm (Green Gradient - "Life/Resurrect") */
+#btn-medic-action.medic-state-active {
+    background: linear-gradient(135deg, #00cc00 0%, #006600 100%) !important;
+    border: 2px solid rgba(255, 255, 255, 0.4) !important;
+    color: #ffffff !important;
+    box-shadow: 0 6px 20px rgba(0, 255, 0, 0.4), 0 0 15px rgba(0, 255, 0, 0.2) !important;
+    cursor: pointer !important;
+    pointer-events: auto !important; /* CLICKABLE */
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    animation: pulse-green 2s infinite;
+}
+
+#btn-medic-action.medic-state-active:active {
+    transform: translateY(-2px) scale(0.97);
+    background: linear-gradient(135deg, #00ee00 0%, #008800 100%) !important;
+    box-shadow: 0 4px 10px rgba(0, 255, 0, 0.6) !important;
+}
+
+@keyframes pulse-green {
+    0% { box-shadow: 0 0 0 0 rgba(0, 204, 0, 0.4); }
+    70% { box-shadow: 0 0 0 10px rgba(0, 204, 0, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(0, 204, 0, 0); }
+}
+
+/* Selected card highlight in graveyard */
+.selected-card-highlight {
+    border: 3px solid #00ff00 !important;
+    transform: scale(1.05) !important;
+    box-shadow: 0 0 20px rgba(0, 255, 0, 0.5) !important;
+    z-index: 10 !important;
+    transition: all 0.2s ease !important;
+}
+
+/* Responsive sizing for flying resurrection card */
+@media (max-width: 480px) {
+    .flying-resurrection-card {
+        width: 63px;
+        height: 88px;
+    }
+}
+
+@media (max-width: 360px) {
+    .flying-resurrection-card {
+        width: 63px;
+        height: 88px;
+    }
+}
+
+@media (max-width: 768px) {
+    .graveyard-modal-content {
+        padding: 15px; /* Balanced padding for mobile */
+        width: 85%; /* Match main width */
+        max-width: 95%;
+        max-height: 70vh; /* Limit max height to accommodate ~4 rows */
+        margin: 0; /* Remove auto margins so flex gap works */
+        height: auto; /* Allow it to shrink */
+    }
+    
+    /* Maintain 3-column layout on mobile */
+    #graveyard-grid {
+        grid-template-columns: repeat(3, 1fr);
+        grid-auto-rows: max-content; /* CRITICAL: prevents rows from collapsing */
+        gap: 12px;
+        padding: 0; /* Remove padding since parent has padding */
+        padding-bottom: 10px; /* Better scrolling experience */
+        height: auto; /* Allow grid to shrink to fit content */
+        min-height: 0; /* Crucial flexbox fix for scrolling */
+    }
+}
+
+@media (max-width: 480px) {
+    .graveyard-modal-content {
+        padding: 12px; /* Balanced padding for small mobile */
+        width: 85%; /* Match main width */
+        max-width: 95%;
+        max-height: 70vh; /* Limit max height to accommodate ~4 rows */
+        margin: 0; /* Remove auto margins so flex gap works */
+        height: auto; /* Allow it to shrink */
+    }
+    
+    /* Maintain 3-column layout on small mobile */
+    #graveyard-grid {
+        grid-template-columns: repeat(3, 1fr);
+        grid-auto-rows: max-content; /* CRITICAL: prevents rows from collapsing */
+        gap: 10px;
+        padding: 0; /* Remove padding since parent has padding */
+        padding-bottom: 10px; /* Better scrolling experience */
+        height: auto; /* Allow grid to shrink to fit content */
+        min-height: 0; /* Crucial flexbox fix for scrolling */
+    }
+}
+
+/* Score Predictor UI Styles */
+#medic-score-preview {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    margin-bottom: 20px;
+    background: rgba(0, 0, 0, 0.5);
+    padding: 10px 20px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.score-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.score-box .label {
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.5);
+    text-transform: uppercase;
+    margin-bottom: 2px;
+}
+
+.score-box .value {
+    font-family: 'CustomHeader', sans-serif;
+    font-size: 24px;
+    font-weight: bold;
+    color: white;
+}
+
+.score-arrow {
+    color: rgba(255, 255, 255, 0.3);
+    font-size: 20px;
+    padding-top: 10px; /* Align with values */
+}
+
+
+/* 3. Force Button Interaction */
+button, .menu-button {
+    touch-action: manipulation !important; /* Enable taps, disable zoom */
+    pointer-events: auto !important; /* Force clickability */
+    z-index: 2147483647 !important; /* Max Z-index to sit on top */
+    position: relative; /* Ensure Z-index works */
+}
+
+/* --- SQUAD BUTTONS (REBUILT) --- */
+/* --- FINAL BUTTON STYLES (Transparent) --- */
+.squad-buttons {
+    position: fixed !important;
+    bottom: calc(20px + env(safe-area-inset-bottom)) !important;
+    left: 0;
+    width: 100%;
+    height: 80px;
+    
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 15px;
+    padding: 0 20px;
+    
+    /* Container allows clicks to pass through */
+    pointer-events: none !important; 
+    
+    /* NO BACKGROUND / NO GRADIENT */
+    background: none !important;
+    
+    z-index: 2147483647 !important;
+}
+
+/* Ensure buttons still have pointer events */
+.squad-action-btn {
+    pointer-events: auto !important;
+    cursor: pointer !important;
+    
+    /* Visuals */
+    border: none;
+    border-radius: 12px;
+    padding: 6px 10px; /* Уменьшенные отступы для большего места тексту */
+    
+    font-size: 13px; /* Уменьшенный размер шрифта */
+    font-weight: bold;
+    text-transform: uppercase;
+    color: white;
+    
+    /* Ограничение в 2 строки с достаточной высотой */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    -webkit-box-pack: center; /* Центрирование для -webkit-box */
+    -webkit-box-align: center; /* Центрирование для -webkit-box */
+    
+    /* Настройки типографики для компактности */
+    white-space: normal; /* Разрешаем перенос */
+    line-height: 1.2 !important; /* Чуть больше интерлиньяж для читаемости */
+    text-align: center; /* Центрирование текста */
+    
+    /* Управление высотой */
+    height: auto; /* Автоматическая высота под содержимое */
+    min-height: 48px; /* Минимальная высота для удобного нажатия */
+    /* Достаточная высота для 2 строк: (font-size * line-height * 2) + padding */
+    max-height: calc(13px * 1.2 * 2 + 12px + 4px); /* Достаточно для 2 строк с запасом */
+    overflow: hidden; /* Нужно для -webkit-line-clamp */
+    text-overflow: ellipsis; /* Многоточие если текст не влезает */
+    
+    /* Перенос длинных слов */
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    
+    box-shadow: 0 4px 15px rgba(0,0,0,0.6);
+    transform: translateZ(1000px);
+    touch-action: manipulation;
+    min-width: 160px;
+    
+    position: relative;
+    z-index: 2147483648 !important;
+    transition: transform 0.1s ease;
+    
+    /* Remove default tap highlight */
+    -webkit-tap-highlight-color: transparent;
+}
+
+.squad-action-btn:active {
+    transform: scale(0.95) translateZ(1000px);
+}
+
+/* Substitutions Button - Default/Active */
+#btn-subs-action {
+    background: linear-gradient(135deg, #ff3333, #cc0000);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* Disabled State (Gray) */
+#btn-subs-action:disabled {
+    background: #4a4a4a !important;
+    color: rgba(255, 255, 255, 0.5) !important;
+    box-shadow: none !important;
+    transform: none !important;
+    cursor: not-allowed;
+}
+
+/* Медиа-запросы для маленьких экранов */
+@media (max-width: 480px) {
+    .squad-action-btn {
+        font-size: 12px; /* Еще меньше на маленьких экранах */
+        padding: 6px 8px; /* Еще более компактные отступы */
+        max-height: calc(12px * 1.2 * 2 + 12px + 4px); /* Обновленная высота для меньшего шрифта с запасом */
+    }
+}
+
+@media (max-width: 360px) {
+    .squad-action-btn {
+        font-size: 11px; /* Минимальный размер для очень маленьких экранов */
+        padding: 5px 8px;
+        max-height: calc(11px * 1.2 * 2 + 10px + 4px); /* Высота с запасом */
+    }
+}
+
+/* Start Match Button (Green) */
+.start-btn {
+    background: linear-gradient(135deg, #33ff33, #00aa00);
+    color: #003300;
+}
+
+/* --- FIX: HIDE TECHNICAL ARTIFACTS --- */
+#enemyCardsContainer, 
+.enemy-cards-container {
+    display: block !important; /* Keep in DOM for JS calculations */
+    visibility: hidden !important; /* Make invisible */
+    opacity: 0 !important;
+    
+    /* Move off-screen to be 100% sure it doesn't block clicks or show up */
+    position: absolute !important;
+    top: -9999px !important;
+    left: -9999px !important;
+    width: 1px !important;
+    height: 1px !important;
+    pointer-events: none !important;
+    z-index: -1 !important;
+}
+
+/* Ensure flying artifacts are killed if they have no position */
+.card-flying:not([style*="top"]), 
+.ghost-card:not([style*="top"]) {
+    display: none !important;
+}
+
+/* --- FIX: HIDE STUCK ANIMATIONS --- */
+/* If a flying card is at 0,0 (stuck), hide it immediately */
+.card-flying[style*="left: 0px"][style*="top: 0px"],
+.ghost-card[style*="left: 0px"][style*="top: 0px"] {
+    display: none !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+
+/* Also hide if it somehow has no inline positioning */
+.card-flying:not([style*="top"]), 
+.ghost-card:not([style*="top"]) {
+    display: none !important;
+}
