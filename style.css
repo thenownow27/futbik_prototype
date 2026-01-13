@@ -517,6 +517,8 @@ h1, h2, h3 {
     margin: 0 !important;
     box-shadow: none !important;
     border-radius: 6px;
+    position: relative; /* Для правильного позиционирования бейджа силы */
+    container-type: inline-size; /* Включает Container Queries для единиц cqi */
 }
 
 /* Колонка колоды и отбоя */
@@ -574,14 +576,17 @@ h1, h2, h3 {
     background: rgba(255, 0, 0, 0.9);
     color: white;
     font-size: 14px;
-    font-weight: bold;
+    font-family: 'CustomHeader', sans-serif;
+    font-weight: normal; /* Убираем программную жирность */
     padding: 3px 8px;
     border-radius: 12px;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
     z-index: 2;
-    font-family: 'CustomHeader', sans-serif;
     min-width: 24px;
     text-align: center;
+    /* Улучшение типографики */
+    -webkit-font-smoothing: antialiased; /* Сглаживание */
+    -moz-osx-font-smoothing: grayscale;
 }
 
 /* Отбой */
@@ -713,6 +718,7 @@ h1, h2, h3 {
     cursor: default;
     box-shadow: -2px 0 6px rgba(0, 0, 0, 0.4) !important; /* Тень для визуального разделения при наложении */
     position: relative;
+    container-type: inline-size; /* Включает Container Queries для единиц cqi */
     border: 2px solid rgba(255, 255, 255, 0.15);
     box-sizing: border-box;
     z-index: auto; /* Пусть управляется JS-ом или порядком DOM */
@@ -902,6 +908,223 @@ h1, h2, h3 {
     z-index: 20;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
     font-family: 'CustomHeader', sans-serif;
+}
+
+/* Power Badge для базовых карт на поле */
+/* Позиционирование: внизу по центру карты (как на макете) */
+/* Расчеты из Figma: карта 250px (ширина), бейдж 80px (32%), шрифт 55px (65% от размера кружка) */
+.card-on-field .field-power-badge {
+    /* --- Позиционирование --- */
+    position: absolute;
+    bottom: 8.86%; /* Точный перенос 31px от Figma (31 / 350 * 100) */
+    left: 50%;
+    transform: translateX(-50%);
+    /* --- Размеры --- */
+    width: 32%; /* 80px / 250px = 32% */
+    aspect-ratio: 1 / 1;
+    height: auto; /* Высота определяется через aspect-ratio */
+    /* --- Фон и структура --- */
+    background: #FFFFFF;
+    border-radius: 50%;
+    z-index: 20;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    pointer-events: none;
+    /* --- ТИПОГРАФИКА (Тонкая настройка) --- */
+    color: #000000;
+    font-family: 'CustomHeader';
+    /* Основные настройки жирности */
+    font-weight: normal !important;
+    font-size: 65%;
+    line-height: 1;
+    /* ХАКИ ДЛЯ ТОНКОГО ШРИФТА (Визуальное облегчение) */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-synthesis: none;
+    opacity: 0.99; /* Хак: заставляет браузер рендерить шрифт тоньше */
+    /* Микро-коррекция вертикали */
+    padding-top: 1px;
+}
+
+/* Модификатор для героев */
+.card-on-field .field-power-badge.hero-badge {
+    background: #000000;
+    color: #FFFFFF;
+    border: 1px solid #E8AF17; /* Пропорциональный перенос 3px из Figma */
+    box-sizing: border-box;
+    /* Исправление жирности для белого текста */
+    font-weight: normal !important; /* Гарантируем, что нет faux bold */
+    -webkit-font-smoothing: antialiased; /* Делает белый текст визуально тоньше */
+    -moz-osx-font-smoothing: grayscale;
+    font-synthesis: none; /* Наследуем хак из базового класса */
+    opacity: 0.99; /* Наследуем хак из базового класса */
+}
+
+/* Модификатор для базовых карт с умениями (смещен влево) */
+.card-on-field .field-power-badge.ability-badge {
+    /* Сбрасываем центрирование стандартного бейджа */
+    left: 13.2%; /* 33px / 250px */
+    bottom: 8.86%; /* 31px / 350px */
+    transform: none; /* ВАЖНО: Убираем translateX(-50%), так как позиционируем от левого края */
+    /* Остальные стили (размер, фон, шрифт) наследуются от .field-power-badge */
+}
+
+/* Модификатор для плотного текста (числа >= 20) */
+.card-on-field .field-power-badge.tight-text {
+    letter-spacing: -0.05em;
+}
+
+/* Анимации изменения силы */
+@keyframes badgeGreenFlash {
+    0% { 
+        background-color: #32CD32; 
+        color: #ffffff; 
+        transform: translateX(-50%) scale(1.3); 
+    }
+    100% { 
+        background-color: #FFFFFF; 
+        color: #000000; 
+        transform: translateX(-50%) scale(1); 
+    }
+}
+
+@keyframes badgeRedFlash {
+    0% { 
+        background-color: #FF4500; 
+        color: #ffffff; 
+        transform: translateX(-50%) scale(1.3); 
+    }
+    100% { 
+        background-color: #FFFFFF; 
+        color: #000000; 
+        transform: translateX(-50%) scale(1); 
+    }
+}
+
+/* Анимации для героев (возвращают к черному фону и золотой обводке) */
+@keyframes badgeGreenFlashHero {
+    0% { 
+        background-color: #32CD32; 
+        color: #ffffff; 
+        border-color: #32CD32;
+        transform: translateX(-50%) scale(1.3); 
+    }
+    100% { 
+        background-color: #000000; 
+        color: #FFFFFF; 
+        border-color: #E8AF17;
+        transform: translateX(-50%) scale(1); 
+    }
+}
+
+@keyframes badgeRedFlashHero {
+    0% { 
+        background-color: #FF4500; 
+        color: #ffffff; 
+        border-color: #FF4500;
+        transform: translateX(-50%) scale(1.3); 
+    }
+    100% { 
+        background-color: #000000; 
+        color: #FFFFFF; 
+        border-color: #E8AF17;
+        transform: translateX(-50%) scale(1); 
+    }
+}
+
+.card-on-field .field-power-badge.badge-increase {
+    animation: badgeGreenFlash 0.5s ease-out;
+}
+
+.card-on-field .field-power-badge.badge-decrease {
+    animation: badgeRedFlash 0.5s ease-out;
+}
+
+/* Анимации для героев */
+.card-on-field .field-power-badge.hero-badge.badge-increase {
+    animation: badgeGreenFlashHero 0.5s ease-out;
+}
+
+.card-on-field .field-power-badge.hero-badge.badge-decrease {
+    animation: badgeRedFlashHero 0.5s ease-out;
+}
+
+/* Анимации для базовых карт с умениями (левая позиция, без translateX) */
+@keyframes badgeGreenFlashLeft {
+    0% { 
+        background-color: #32CD32; 
+        color: #ffffff; 
+        transform: scale(1.3); 
+    }
+    100% { 
+        background-color: #FFFFFF; 
+        color: #000000; 
+        transform: scale(1); 
+    }
+}
+
+@keyframes badgeRedFlashLeft {
+    0% { 
+        background-color: #FF4500; 
+        color: #ffffff; 
+        transform: scale(1.3); 
+    }
+    100% { 
+        background-color: #FFFFFF; 
+        color: #000000; 
+        transform: scale(1); 
+    }
+}
+
+/* Применяем корректные анимации для левого бейджа */
+.card-on-field .field-power-badge.ability-badge.badge-increase {
+    animation: badgeGreenFlashLeft 0.5s ease-out;
+}
+
+.card-on-field .field-power-badge.ability-badge.badge-decrease {
+    animation: badgeRedFlashLeft 0.5s ease-out;
+}
+
+/* Анимации для Героя СЛЕВА (Hero + Ability) */
+@keyframes badgeGreenFlashHeroLeft {
+    0% { 
+        background-color: #32CD32; 
+        color: #ffffff; 
+        border-color: #32CD32;
+        transform: scale(1.3); /* Без translateX! */
+    }
+    100% { 
+        background-color: #000000; 
+        color: #FFFFFF; 
+        border-color: #E8AF17;
+        transform: scale(1); 
+    }
+}
+
+@keyframes badgeRedFlashHeroLeft {
+    0% { 
+        background-color: #FF4500; 
+        color: #ffffff; 
+        border-color: #FF4500;
+        transform: scale(1.3); /* Без translateX! */
+    }
+    100% { 
+        background-color: #000000; 
+        color: #FFFFFF; 
+        border-color: #E8AF17;
+        transform: scale(1); 
+    }
+}
+
+/* Применяем эти анимации только когда у элемента ЕСТЬ ОБА класса */
+.card-on-field .field-power-badge.hero-badge.ability-badge.badge-increase {
+    animation: badgeGreenFlashHeroLeft 0.5s ease-out;
+}
+
+.card-on-field .field-power-badge.hero-badge.ability-badge.badge-decrease {
+    animation: badgeRedFlashHeroLeft 0.5s ease-out;
 }
 
 /* При наведении карта всегда должна быть выше всех */
@@ -1813,11 +2036,14 @@ h1, h2, h3 {
     right: auto !important; /* Сбрасываем старые координаты */
     font-family: 'CustomHeader', sans-serif; /* Подставляем наш шрифт вместо SSN 25-26 */
     font-style: normal;
-    font-weight: 700;
+    font-weight: normal; /* Убираем программную жирность */
     font-size: 10px;
     line-height: 12px;
     text-align: center;
     color: #000000;
+    /* Улучшение типографики */
+    -webkit-font-smoothing: antialiased; /* Сглаживание */
+    -moz-osx-font-smoothing: grayscale;
     background: transparent !important; /* Убираем белый фон */
     padding: 0;
     border: none; /* Убираем border */

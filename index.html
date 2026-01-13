@@ -1686,6 +1686,7 @@
                                     fieldCard.setAttribute('data-full-img', resurrectedCard.img);
                                     fieldCard.addEventListener('dragstart', e => e.preventDefault());
                                     addInspectionEvents(fieldCard, resurrectedCard.img);
+                                    addFieldPowerBadge(fieldCard, resurrectedCard);
                                     
                                     fieldCard.style.opacity = '0';
                                     insertCardSmartly(targetRow, fieldCard);
@@ -2637,11 +2638,16 @@
         }
         
         // Функция пересчета очков игрока (SAFE MODE)
+        // Функция пересчета очков игрока (FIXED: One-to-One Mapping & Tactics Support)
         function calculatePlayerScore() {
             try {
                 let score = 0;
                 const rows = ['attack', 'midfield', 'defense'];
                 
+                // Сет для отслеживания уже обновленных DOM-элементов в этом цикле
+                // Это предотвращает двойное обновление дубликатов (когда одна карта обновляет всех клонов)
+                const updatedElements = new Set();
+
                 rows.forEach(rowId => {
                     const cardsInRow = playerCardsOnField.filter(card => card.rowId === rowId);
                     
@@ -2649,39 +2655,67 @@
                     const hasSupport = playerTacticsCards.some(card => card.rowId === rowId && card.cardData.ability === 'support');
                     const hasLeader = cardsInRow.some(card => card.cardData.ability === 'leader');
                     
+                    // Получаем контейнеры: Ряд и Слот тактики
+                    const rowElement = getTargetRow(rowId);
+                    const tacticsElement = getTacticsSlot(rowId);
+
                     cardsInRow.forEach(entry => {
                         const card = entry.cardData;
-                        // SECURITY: Force number type to prevent NaN
                         let currentPower = parseInt(card.power);
                         if (isNaN(currentPower)) currentPower = 0;
                         
-                        // Heroes are immune to buffs/debuffs
+                        // --- Расчет силы ---
+                        let finalPower = currentPower;
+
+                        // Герои не бафаются
                         if (card.isHero || card.cardtype === 'hero') {
                             score += currentPower;
-                            return; 
+                            finalPower = currentPower;
+                        } else {
+                            // Leader
+                            if (hasLeader && card.ability !== 'leader') {
+                                currentPower += 1;
+                            }
+
+                            let multiplier = 1;
+
+                            // Bond
+                            if (card.ability === 'bond') {
+                                const bondCount = cardsInRow.filter(c => c.cardData.ability === 'bond').length;
+                                if (bondCount >= 2) multiplier *= 2;
+                            }
+
+                            // Captain / Support
+                            let buffActive = false;
+                            if (hasCaptain && card.ability !== 'captain') buffActive = true;
+                            if (hasSupport) buffActive = true;
+
+                            if (buffActive) multiplier *= 2;
+
+                            finalPower = currentPower * multiplier;
+                            score += finalPower;
+                        }
+                        
+                        // --- ВИЗУАЛЬНОЕ ОБНОВЛЕНИЕ (Smart Mapping) ---
+                        // 1. Собираем всех кандидатов (и в ряду, и в тактике) с таким ID
+                        let candidates = [];
+                        if (rowElement) {
+                            const foundInRow = rowElement.querySelectorAll(`.card-on-field[data-card-id="${card.id}"]`);
+                            candidates = [...candidates, ...foundInRow];
+                        }
+                        if (tacticsElement) {
+                            const foundInTactics = tacticsElement.querySelectorAll(`.card-on-field[data-card-id="${card.id}"]`);
+                            candidates = [...candidates, ...foundInTactics];
                         }
 
-                        // Leader Logic
-                        if (hasLeader && card.ability !== 'leader') {
-                            currentPower += 1;
+                        // 2. Ищем первого кандидата, который еще НЕ был обновлен в этом цикле
+                        const targetEl = candidates.find(el => !updatedElements.has(el));
+
+                        // 3. Обновляем и помечаем как "занятый"
+                        if (targetEl) {
+                            applyBadgeUpdate(targetEl, finalPower);
+                            updatedElements.add(targetEl);
                         }
-
-                        let multiplier = 1;
-
-                        // Bond Logic
-                        if (card.ability === 'bond') {
-                            const bondCount = cardsInRow.filter(c => c.cardData.ability === 'bond').length;
-                            if (bondCount >= 2) multiplier *= 2;
-                        }
-
-                        // Buff Logic
-                        let buffActive = false;
-                        if (hasCaptain && card.ability !== 'captain') buffActive = true;
-                        if (hasSupport) buffActive = true;
-
-                        if (buffActive) multiplier *= 2;
-
-                        score += (currentPower * multiplier);
                     });
                 });
                 return score;
@@ -2691,11 +2725,13 @@
             }
         }
         
+        // Функция пересчета очков противника (FIXED: One-to-One Mapping & Tactics Support)
         function calculateEnemyScore() {
             try {
                 let score = 0;
                 const rows = ['attack', 'midfield', 'defense'];
-                
+                const updatedElements = new Set(); // Сет для защиты от дубликатов
+
                 rows.forEach(rowId => {
                     const cardsInRow = enemyCardsOnField.filter(card => card.rowId === rowId);
                     
@@ -2703,41 +2739,62 @@
                     const hasSupport = enemyTacticsCards.some(card => card.rowId === rowId && card.cardData.ability === 'support');
                     const hasLeader = cardsInRow.some(card => card.cardData.ability === 'leader');
                     
+                    const rowElement = getEnemyTargetRow(rowId);
+                    const tacticsElement = getEnemyTacticsSlot(rowId);
+
                     cardsInRow.forEach(entry => {
                         const card = entry.cardData;
-                        
-                        // SECURITY: Force number type
                         let currentPower = parseInt(card.power);
                         if (isNaN(currentPower)) currentPower = 0;
                         
+                        let finalPower = currentPower;
+
                         if (card.isHero || card.cardtype === 'hero') {
                             score += currentPower;
-                            return;
+                            finalPower = currentPower;
+                        } else {
+                            if (hasLeader && card.ability !== 'leader') {
+                                currentPower += 1;
+                            }
+
+                            let multiplier = 1;
+
+                            if (card.ability === 'bond') {
+                                const bondCount = cardsInRow.filter(c => c.cardData.ability === 'bond').length;
+                                if (bondCount >= 2) multiplier *= 2;
+                            }
+
+                            let buffActive = false;
+                            if (hasCaptain && card.ability !== 'captain') buffActive = true;
+                            if (hasSupport) buffActive = true;
+
+                            if (buffActive) multiplier *= 2;
+
+                            finalPower = currentPower * multiplier;
+                            score += finalPower;
+                        }
+                        
+                        // --- Smart Mapping ---
+                        let candidates = [];
+                        if (rowElement) {
+                            const foundInRow = rowElement.querySelectorAll(`.card-on-field[data-card-id="${card.id}"]`);
+                            candidates = [...candidates, ...foundInRow];
+                        }
+                        if (tacticsElement) {
+                            const foundInTactics = tacticsElement.querySelectorAll(`.card-on-field[data-card-id="${card.id}"]`);
+                            candidates = [...candidates, ...foundInTactics];
                         }
 
-                        if (hasLeader && card.ability !== 'leader') {
-                            currentPower += 1;
+                        const targetEl = candidates.find(el => !updatedElements.has(el));
+
+                        if (targetEl) {
+                            applyBadgeUpdate(targetEl, finalPower);
+                            updatedElements.add(targetEl);
                         }
-
-                        let multiplier = 1;
-
-                        if (card.ability === 'bond') {
-                            const bondCount = cardsInRow.filter(c => c.cardData.ability === 'bond').length;
-                            if (bondCount >= 2) multiplier *= 2;
-                        }
-
-                        let buffActive = false;
-                        if (hasCaptain && card.ability !== 'captain') buffActive = true;
-                        if (hasSupport) buffActive = true;
-
-                        if (buffActive) multiplier *= 2;
-
-                        score += (currentPower * multiplier);
                     });
                 });
                 
                 score += enemyCoachBonusScore;
-                
                 return score;
             } catch (error) {
                 console.error('Error in calculateEnemyScore:', error);
@@ -3428,6 +3485,7 @@
                 fieldCard.setAttribute('data-full-img', targetCard.img);
                 fieldCard.setAttribute('data-card-id', targetCard.id);
                 addInspectionEvents(fieldCard, targetCard.img);
+                addFieldPowerBadge(fieldCard, targetCard);
                 
                 // Add to logic array
                 targetList.push({ cardData: targetCard, rowId });
@@ -3582,6 +3640,54 @@
             if (buffActive) multiplier *= 2;
 
             return power * multiplier;
+        }
+
+        // Вспомогательная функция для отрисовки бейджа (чтобы не дублировать код)
+        function applyBadgeUpdate(cardElement, newPower) {
+            if (!cardElement) return;
+            
+            const badge = cardElement.querySelector('.field-power-badge');
+            if (!badge) return;
+
+            // Читаем "Истинное значение" из атрибута
+            // Если атрибута нет (баг), считаем что там -999, чтобы точно обновить
+            const attrValue = badge.getAttribute('data-power');
+            const oldPower = attrValue === null ? -999 : parseInt(attrValue);
+
+            // СТРОЖАЙШАЯ ПРОВЕРКА: Если цифры равны - СТОП. Никаких анимаций.
+            if (oldPower === newPower) {
+                return; 
+            }
+
+            // Если мы здесь, значит значение реально изменилось
+            // 1. Обновляем "Истину"
+            badge.setAttribute('data-power', newPower);
+            
+            // 2. Обновляем Визуал
+            badge.textContent = newPower;
+
+            // --- НОВОЕ: Динамический кернинг для больших чисел ---
+            if (newPower >= 20) {
+                badge.classList.add('tight-text');
+            } else {
+                badge.classList.remove('tight-text');
+            }
+            
+            // 3. Запускаем анимацию (только если это не инициализация с -999)
+            if (oldPower !== -999) {
+                badge.classList.remove('badge-increase', 'badge-decrease');
+                void badge.offsetWidth; // Reflow hack
+                
+                if (newPower > oldPower) {
+                    badge.classList.add('badge-increase');
+                } else if (newPower < oldPower) {
+                    badge.classList.add('badge-decrease');
+                }
+                
+                setTimeout(() => {
+                    badge.classList.remove('badge-increase', 'badge-decrease');
+                }, 500);
+            }
         }
 
         // 2. Helper: Animates a card flying to graveyard with Safety Timeout
@@ -5117,6 +5223,7 @@
             
             // Сохраняем полную картинку для инспекции
             fieldCard.setAttribute('data-full-img', availableCard.img);
+            addFieldPowerBadge(fieldCard, availableCard);
             
             if (isTacticsPlacement) {
                 const existingCard = actualTargetElement.querySelector('.card-on-field');
@@ -5818,6 +5925,7 @@
             
             // Подключаем инспекцию
             addInspectionEvents(fieldCard, cardData.img);
+            addFieldPowerBadge(fieldCard, cardData);
             
             // Вставляем в ряд (скрытую)
             insertCardSmartly(targetRow, fieldCard);
@@ -6277,6 +6385,7 @@
                     fieldImg.addEventListener('dragstart', e => e.preventDefault());
                     addInspectionEvents(fieldCard, cardData.img);
                     attachDummyClickListener(fieldCard, cardData); // Allow Dummy to pick it up later!
+                    addFieldPowerBadge(fieldCard, cardData);
                     
                     insertCardSmartly(enemyTargetRow, fieldCard);
                     updateRowLayout(enemyTargetRow);
@@ -6401,6 +6510,7 @@
                 
                 // Подключаем инспекцию карты на поле
                 addInspectionEvents(fieldCard, cardData.img);
+                addFieldPowerBadge(fieldCard, cardData);
                 
                 // Добавляем обработчик клика для способности Dummy (шпионы тоже можно забрать манекеном)
                 attachDummyClickListener(fieldCard, cardData);
@@ -6705,6 +6815,45 @@
 
             cardElement.addEventListener('transitionend', finishAnimation);
             setTimeout(finishAnimation, 700); // Safety fallback
+        }
+        
+        // Функция для добавления бейджа силы на карту на поле
+        function addFieldPowerBadge(fieldCard, cardData) {
+            // 1. Исключения: Dummy и Support никогда не получают бейдж силы
+            if (cardData.ability === 'dummy' || cardData.ability === 'support') {
+                return;
+            }
+
+            // 2. Разрешаем бейдж, если это Базовая карта ИЛИ Герой
+            const isBase = cardData.cardtype === 'base';
+            const isHero = cardData.isHero || cardData.cardtype === 'hero';
+
+            if (isBase || isHero) {
+                const powerBadge = document.createElement('div');
+                powerBadge.className = 'field-power-badge';
+                
+                // Логика классов
+                if (isHero) {
+                    powerBadge.classList.add('hero-badge');
+                }
+                
+                if (cardData.ability && cardData.ability !== '' && cardData.ability !== 'none') {
+                    powerBadge.classList.add('ability-badge');
+                }
+
+                const initialPower = cardData.power || 0;
+                
+                // Устанавливаем текст и ВАЖНЫЙ атрибут данных для сравнения
+                powerBadge.textContent = initialPower;
+                powerBadge.setAttribute('data-power', initialPower);
+                
+                // Динамический кернинг для больших чисел (>= 20)
+                if (initialPower >= 20) {
+                    powerBadge.classList.add('tight-text');
+                }
+                
+                fieldCard.appendChild(powerBadge);
+            }
         }
         
         // Функция для умной вставки карт в ряд
@@ -7130,6 +7279,7 @@
                     
                     // Подключаем инспекцию карты на поле
                     addInspectionEvents(fieldCard, cardData.img);
+                    addFieldPowerBadge(fieldCard, cardData);
                     
                     // Добавляем обработчик клика для способности Dummy
                     attachDummyClickListener(fieldCard, cardData);
@@ -7515,6 +7665,7 @@
                 newImg.addEventListener('dragstart', (e) => e.preventDefault());
                 
                 addInspectionEvents(newFieldCard, finalDummyCard.img);
+                addFieldPowerBadge(newFieldCard, finalDummyCard);
                 
                 // Заменяем старую карту на новую
                 targetFieldCard.replaceWith(newFieldCard);
@@ -7692,6 +7843,7 @@
                     newFieldCard.setAttribute('data-full-img', dummyDB.img);
                     newFieldCard.addEventListener('dragstart', (e) => e.preventDefault());
                     addInspectionEvents(newFieldCard, dummyDB.img);
+                    addFieldPowerBadge(newFieldCard, dummyDB);
                     
                     if (targetFieldCard && targetFieldCard.parentNode) {
                         targetFieldCard.replaceWith(newFieldCard);
@@ -8886,7 +9038,8 @@
                 finalCardElem.setAttribute('data-card-id', cardData.id);
                 addInspectionEvents(finalCardElem, cardData.img);
                 attachDummyClickListener(finalCardElem, cardData);
-
+                addFieldPowerBadge(finalCardElem, cardData);
+                
                 // Add to Logic & DOM
                 targetArray.push({ cardData, rowId });
                 insertCardSmartly(targetRow, finalCardElem);
