@@ -562,6 +562,9 @@
         let playerPassed = false;
         let enemyPassed = false;
         
+        // AI Strategy для 1-го раунда
+        let aiRound1Strategy = 'CAUTIOUS'; // Стратегия на 1-й раунд
+        
         // Счетчик ходов
         let movesCount = 0;
         
@@ -2382,6 +2385,10 @@
         
         // Функция продолжения инициализации игры после определения первого хода
         function initializeMatchResources() {
+            // --- AI PERSONALITY RANDOMIZER ---
+            aiRound1Strategy = Math.random() < 0.5 ? 'CAUTIOUS' : 'AGGRESSIVE';
+            console.log(`AI Strategy for Round 1 initialized: ${aiRound1Strategy}`);
+            
             // Сбрасываем флаги тренеров
             enemyCoachActive = false;
             enemyCoachUsed = false;
@@ -4471,13 +4478,31 @@
             // 3. Expensive Win (Player passed, Round 1)
             if (!shouldPass && currentRound === 1 && playerPassed && enemyScore < totalScore) {
                 const pointsNeeded = gap + 1;
-                // Find strongest available card
-                const strongestCard = cardsWithoutDummy.reduce((max, card) => (card.power || 0) > (max.power || 0) ? card : max, { power: 0 });
                 
-                // If even the strongest card isn't enough, we'd need 2+ cards. That's too expensive.
-                if ((strongestCard.power || 0) < pointsNeeded) {
-                    shouldPass = true;
-                    passReason = "Победа в раунде стоит слишком дорого. Бот сдает раунд.";
+                if (aiRound1Strategy === 'CAUTIOUS') {
+                    // --- CAUTIOUS LOGIC (Старая) ---
+                    // Если самая сильная карта не позволяет выиграть сразу - пас.
+                    // Бот не хочет тратить 2+ карты ради 1-го раунда.
+                    const strongestCard = cardsWithoutDummy.reduce((max, card) => (card.power || 0) > (max.power || 0) ? card : max, { power: 0 });
+                    
+                    if ((strongestCard.power || 0) < pointsNeeded) {
+                        shouldPass = true;
+                        passReason = "Победа стоит слишком дорого (Cautious). Пас.";
+                    }
+                } else {
+                    // --- AGGRESSIVE LOGIC (Новая) ---
+                    // Бот хочет забрать 1-й раунд любой ценой, пока это математически возможно.
+                    // Считаем суммарную силу руки (приблизительно).
+                    const totalHandPower = cardsWithoutDummy.reduce((sum, card) => sum + (card.power || 0), 0);
+                    
+                    // Пасуем ТОЛЬКО если даже выложив ВСЕ карты, мы не догоним.
+                    if (totalHandPower < pointsNeeded) {
+                        shouldPass = true;
+                        passReason = "Математически невозможно победить. Пас.";
+                    } else {
+                        console.log(`AI (Aggressive): Gap is ${gap}. Fighting for Round 1!`);
+                        // shouldPass остается false -> код пойдет ниже и выберет карту для хода
+                    }
                 }
             }
             // -------------------------
@@ -5006,36 +5031,76 @@
                 }
             }
             
-            // Fallback: Smart Card Selection (existing logic)
+            // Fallback: Smart Card Selection (existing logic updated)
             if (!selectedCard) {
                 playMode = 'STANDARD';
                 const finishers = cardsWithoutDummy.filter(card => 
                     card.isHero === true || card.cardtype === 'hero' || (card.power || 0) >= 10
                 );
+                
+                // Обычные карты (не герои, не финишеры)
                 const standardCards = cardsWithoutDummy.filter(card => 
                     !(card.isHero === true || card.cardtype === 'hero' || (card.power || 0) >= 10) &&
-                    !isInefficientMedic(card) // Skip inefficient medics
+                    !isInefficientMedic(card)
                 );
                 
+                // ЕСЛИ МЫ ПРОИГРЫВАЕМ ИЛИ НИЧЬЯ (Нужно догонять)
                 if (enemyScore <= totalScore) {
                     const gap = totalScore - enemyScore;
-                    const winningStandardCards = standardCards
-                        .filter(card => (card.power || 0) > gap)
-                        .sort((a, b) => (a.power || 0) - (b.power || 0));
                     
-                    if (winningStandardCards.length > 0) {
-                        selectedCard = winningStandardCards[0];
-                    } else {
-                        const winningFinishers = finishers
-                            .filter(card => (card.power || 0) > gap)
-                            .sort((a, b) => (a.power || 0) - (b.power || 0));
-                        if (winningFinishers.length > 0) {
-                            selectedCard = winningFinishers[0];
+                    // --- НОВАЯ ЛОГИКА: ПРИОРИТЕТ SUPPORT ---
+                    // Проверяем, есть ли карта Support, которая позволит выиграть раунд прямо сейчас
+                    const supportCard = cardsWithoutDummy.find(c => c.ability === 'support');
+                    if (supportCard) {
+                        // Эмулируем, сколько очков даст Support в лучшем ряду
+                        const bestRowId = evaluateBestSupportRow(); // Эта функция у нас уже есть
+                        
+                        // Более точный расчет прироста:
+                        const currentVal = getEnemyRowScore(bestRowId);
+                        // Если поставим Support, очки удвоятся. Прирост = currentVal.
+                        const potentialGain = currentVal;
+
+                        console.log(`AI Support Check: Gap ${gap}, Potential Gain ${potentialGain}`);
+
+                        // Если Support перекрывает разрыв (+1 для запаса)
+                        if (potentialGain > gap) {
+                            console.log("AI Smart Move: Using Support to win round and save units!");
+                            selectedCard = supportCard;
+                            selectedCard._preferredRowId = bestRowId;
+                        }
+                    }
+                    // ---------------------------------------
+
+                    // Если Support не сработал или его нет, ищем обычную карту (старая логика)
+                    if (!selectedCard) {
+                        const winningStandardCards = standardCards
+                            .filter(card => {
+                                // Для обычных карт считаем value (сила + синергии)
+                                const possibleRows = card.position === 'any' ? ['attack', 'midfield', 'defense'] : [card.position];
+                                // Берем лучший вариант
+                                const maxVal = Math.max(...possibleRows.map(r => calculateUnitPower({cardData: card, rowId: r}, false)));
+                                return maxVal > gap;
+                            })
+                            .sort((a, b) => (a.power || 0) - (b.power || 0)); // Берем самую слабую из победных
+                        
+                        if (winningStandardCards.length > 0) {
+                            selectedCard = winningStandardCards[0];
                         } else {
-                            selectedCard = cardsWithoutDummy.sort((a, b) => (a.power || 0) - (b.power || 0))[0];
+                            // Если обычные не тянут, смотрим финишеры (герои/сильные)
+                            const winningFinishers = finishers
+                                .filter(card => (card.power || 0) > gap)
+                                .sort((a, b) => (a.power || 0) - (b.power || 0));
+                            if (winningFinishers.length > 0) {
+                                selectedCard = winningFinishers[0];
+                            } else {
+                                // Ничто не выигрывает -> играем самую сильную из того что есть, чтобы сократить разрыв
+                                // (или самую слабую, если решили слить, но это решается в фазе паса)
+                                selectedCard = cardsWithoutDummy.sort((a, b) => (b.power || 0) - (a.power || 0))[0];
+                            }
                         }
                     }
                 } else {
+                    // МЫ ВЕДЕМ В СЧЕТЕ (Увеличиваем отрыв или темп)
                     if (standardCards.length > 0) {
                         selectedCard = standardCards.sort((a, b) => (a.power || 0) - (b.power || 0))[0];
                     } else {
@@ -5157,6 +5222,92 @@
                 return;
             }
             // ------------------------------------------
+
+            // ============================================
+            // SAFETY CHECK: REDCARD / SCORCH SUICIDE PREVENTION
+            // ============================================
+            // Если выбрана карта "RedCard" (Черников), проверяем, не уничтожит ли она нас самих.
+            if (selectedCard && selectedCard.ability === 'redcard' && !shouldPass) {
+                console.log("AI Safety Check: Analyzing RedCard impact...");
+
+                // 1. Функция расчета силы (копия логики из Phase 2)
+                const getPowerForCheck = (entry, isPlayerSide) => {
+                    const c = entry.cardData;
+                    const rId = entry.rowId;
+                    if (c.isHero || c.cardtype === 'hero') return -1; // Героев не трогаем
+                    
+                    let p = parseInt(c.power) || 0;
+                    
+                    // Упрощенный расчет текущей силы на поле
+                    // (Можно использовать DOM значения, но лучше расчет)
+                    const fieldArr = isPlayerSide ? playerCardsOnField : enemyCardsOnField;
+                    const rowCards = fieldArr.filter(x => x.rowId === rId);
+                    
+                    // Leader
+                    const hasLeader = rowCards.some(x => x.cardData.ability === 'leader');
+                    if (hasLeader && c.ability !== 'leader' && c.cardtype === 'base') p += 1;
+                    
+                    // Multipliers (Bond/Captain/Support)
+                    let mult = 1;
+                    if (c.ability === 'bond' && rowCards.filter(x => x.cardData.ability === 'bond').length >= 2) mult *= 2;
+                    
+                    let buffActive = false;
+                    const tacticsArr = isPlayerSide ? playerTacticsCards : enemyTacticsCards;
+                    const hasCap = rowCards.some(x => x.cardData.ability === 'captain');
+                    const hasSup = tacticsArr.some(x => x.rowId === rId && x.cardData.ability === 'support');
+                    
+                    if ((hasCap && c.ability !== 'captain') || hasSup) buffActive = true;
+                    if (buffActive) mult *= 2;
+                    
+                    return p * mult;
+                };
+
+                // 2. Сбор данных со всего поля
+                const pVuls = playerCardsOnField.map(c => ({ owner: 'player', val: getPowerForCheck(c, true) })).filter(x => x.val > 0);
+                const eVuls = enemyCardsOnField.map(c => ({ owner: 'enemy', val: getPowerForCheck(c, false) })).filter(x => x.val > 0);
+                const allUnits = [...pVuls, ...eVuls];
+
+                if (allUnits.length > 0) {
+                    const maxP = Math.max(...allUnits.map(u => u.val));
+                    
+                    // 3. Считаем потери
+                    const playerLoss = pVuls.filter(u => u.val === maxP).reduce((sum, u) => sum + u.val, 0);
+                    const enemyLoss = eVuls.filter(u => u.val === maxP).reduce((sum, u) => sum + u.val, 0);
+                    const netProfit = playerLoss - enemyLoss;
+
+                    console.log(`AI RedCard Check: MaxPower ${maxP}. Enemy Loss: ${enemyLoss}, Player Loss: ${playerLoss}. Net: ${netProfit}`);
+
+                    // 4. Решение: Если мы теряем больше, чем игрок (или столько же, но много), и это "в минус"
+                    // Если netProfit < 0, мы сжигаем себе очков больше, чем врагу.
+                    if (netProfit < 0) {
+                        console.warn("AI Safety: RedCard hurts me more! Aborting play.");
+                        
+                        // Если есть другие карты - пробуем выбрать другую (просто сбрасываем, fallback выберет следующую)
+                        // Но если Черников - последняя карта (или остались только манекены), то ПАСУЕМ.
+                        const alternatives = cardsWithoutDummy.filter(c => c.id !== selectedCard.id);
+                        
+                        if (alternatives.length > 0) {
+                            console.log("AI: Switching to alternative card.");
+                            // Берем самую сильную из оставшихся
+                            selectedCard = alternatives.sort((a, b) => (b.power || 0) - (a.power || 0))[0];
+                            // Если и альтернатив нет (маловероятно), fallback сработает ниже
+                        } else {
+                            // Альтернатив нет. Играть Черникова нельзя. ПАС.
+                            console.log("AI: No alternatives. Forced Pass to save score.");
+                            shouldPass = true;
+                            passReason = "Играть эту карту невыгодно (Self-Scorch).";
+                            selectedCard = null; // Отменяем выбор
+                            
+                            // Вызываем логику паса прямо здесь
+                            enemyPassed = true;
+                            showGameNotification(passReason, 'info');
+                            checkRoundEnd();
+                            if (!playerPassed) { isPlayerTurn = true; updatePassButtonState(); }
+                            return; // ВЫХОД ИЗ ФУНКЦИИ
+                        }
+                    }
+                }
+            }
 
             const availableCard = selectedCard;
             // Safety check: if still null, return to prevent crash
@@ -7464,9 +7615,11 @@
             clearAllHighlights();
         }
         
-        // Функция для выполнения обмена Dummy для бота
+        // Функция для выполнения обмена Dummy для бота (FIXED: ROBUST DUPLICATE PREVENTION)
         async function executeEnemyDummySwap(dummyCardData, targetCardData, targetRowId) {
             try {
+                console.log(`AI Dummy Swap Started: Dummy ${dummyCardData.id} -> Target ${targetCardData.id}`);
+
                 // Находим DOM-элемент целевой карты на поле
                 const targetRow = getEnemyTargetRow(targetRowId);
                 if (!targetRow) {
@@ -7480,13 +7633,10 @@
                     return;
                 }
                 
-                // 1. Coordinates
+                // 1. Coordinates & Visuals Setup
                 const startRect = targetFieldCard.getBoundingClientRect(); // Position on field
                 const opponentHandElement = document.getElementById('opponent-hand');
-                if (!opponentHandElement) {
-                    console.error('executeEnemyDummySwap: Не найден контейнер руки бота');
-                    return;
-                }
+                if (!opponentHandElement) return;
                 const handRect = opponentHandElement.getBoundingClientRect(); // Position in hand
                 
                 // 2. Hide original on field immediately
@@ -7495,70 +7645,48 @@
                 // 3. Create Flying Spy (Field -> Hand)
                 const ghostSpy = targetFieldCard.cloneNode(true);
                 ghostSpy.classList.add('ghost-card');
-                ghostSpy.style.position = 'fixed';
-                ghostSpy.style.width = startRect.width + 'px';
-                ghostSpy.style.height = startRect.height + 'px';
-                ghostSpy.style.zIndex = '10000';
-                ghostSpy.style.pointerEvents = 'none';
-                ghostSpy.style.transition = 'none';
-                ghostSpy.style.transformOrigin = 'center center';
-                
-                // Start position: center of field card
                 const startX = startRect.left + startRect.width / 2;
                 const startY = startRect.top + startRect.height / 2;
-                ghostSpy.style.left = startX + 'px';
-                ghostSpy.style.top = startY + 'px';
-                ghostSpy.style.transform = 'translate(-50%, -50%)';
+                Object.assign(ghostSpy.style, {
+                    position: 'fixed', width: startRect.width + 'px', height: startRect.height + 'px',
+                    zIndex: '10000', pointerEvents: 'none', transition: 'none', transformOrigin: 'center center',
+                    left: startX + 'px',
+                    top: startY + 'px',
+                    transform: 'translate(-50%, -50%)'
+                });
                 document.body.appendChild(ghostSpy);
                 
                 // 4. Create Flying Dummy (Hand -> Field)
                 const flyingDummy = document.createElement('div');
                 flyingDummy.className = 'card-flying';
-                flyingDummy.style.position = 'fixed';
-                flyingDummy.style.zIndex = '10001'; // On top of ghost spy
-                flyingDummy.style.pointerEvents = 'none';
-                flyingDummy.style.transition = 'none';
-                flyingDummy.style.transformOrigin = 'center center';
-                flyingDummy.style.borderRadius = '8px';
-                flyingDummy.style.overflow = 'hidden';
-                flyingDummy.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.6)';
-                
-                // Start position: center of hand (small size)
                 const handCenterX = handRect.left + handRect.width / 2;
                 const handCenterY = handRect.top + handRect.height / 2;
-                const handCardWidth = 90; // Approximate card width in hand
-                const handCardHeight = 126; // Approximate card height in hand
                 
-                flyingDummy.style.left = handCenterX + 'px';
-                flyingDummy.style.top = handCenterY + 'px';
-                flyingDummy.style.width = handCardWidth + 'px';
-                flyingDummy.style.height = handCardHeight + 'px';
-                flyingDummy.style.transform = 'translate(-50%, -50%)';
+                Object.assign(flyingDummy.style, {
+                    position: 'fixed', zIndex: '10001', pointerEvents: 'none', transition: 'none',
+                    transformOrigin: 'center center', borderRadius: '8px', overflow: 'hidden',
+                    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.6)',
+                    left: handCenterX + 'px', top: handCenterY + 'px',
+                    width: '90px', height: '126px', transform: 'translate(-50%, -50%)'
+                });
                 
                 const dummyImg = document.createElement('img');
                 const dummyImageSrc = (dummyCardData.miniImg && dummyCardData.miniImg.trim() !== "") ? dummyCardData.miniImg : dummyCardData.img;
                 dummyImg.src = dummyImageSrc;
-                dummyImg.style.width = '100%';
-                dummyImg.style.height = '100%';
-                dummyImg.style.objectFit = 'cover';
+                Object.assign(dummyImg.style, { width: '100%', height: '100%', objectFit: 'cover' });
                 flyingDummy.appendChild(dummyImg);
                 document.body.appendChild(flyingDummy);
                 
                 // 5. Trigger Animations
                 requestAnimationFrame(() => {
-                    // Spy goes UP (to hand)
-                    const targetX = handCenterX;
-                    const targetY = handCenterY;
+                    // Spy goes UP
                     ghostSpy.style.transition = 'all 900ms cubic-bezier(0.4, 0, 0.2, 1)';
-                    ghostSpy.style.left = targetX + 'px';
-                    ghostSpy.style.top = targetY + 'px';
-                    
-                    // FIX: Removed rotateY(180deg) to prevent mirroring. 
-                    // Added opacity fade since it enters a hidden hand.
+                    ghostSpy.style.left = handCenterX + 'px';
+                    ghostSpy.style.top = handCenterY + 'px';
                     ghostSpy.style.transform = 'translate(-50%, -50%) scale(0.8)'; 
-                    ghostSpy.style.opacity = '0'; // Fade out as it enters hand
+                    ghostSpy.style.opacity = '0'; 
                     
-                    // Dummy comes DOWN (from hand to field) - slight delay for natural swap feel
+                    // Dummy comes DOWN
                     setTimeout(() => {
                         flyingDummy.style.transition = 'all 900ms cubic-bezier(0.4, 0, 0.2, 1)';
                         flyingDummy.style.left = (startRect.left + startRect.width / 2) + 'px';
@@ -7569,137 +7697,102 @@
                     }, 100);
                 });
                 
-                // 6. Wait for both animations to complete
+                // 6. Wait for animations
                 await new Promise(resolve => setTimeout(resolve, 950));
-                
-                // Clean up flying elements
                 ghostSpy.remove();
                 flyingDummy.remove();
                 
-                // 2. Обновление данных (СТРОГИЙ АЛГОРИТМ для предотвращения дублирования)
+                // --- CRITICAL LOGIC FIX STARTS HERE ---
                 
-                // 2.1. Находим ИНДЕКС целевой карты в массиве enemyCardsOnField по ID
+                // 2.1. Find Index on Field
                 const targetFieldIndex = enemyCardsOnField.findIndex(entry => entry.cardData.id === targetCardData.id);
-                
                 if (targetFieldIndex === -1) {
-                    console.error('executeEnemyDummySwap: Целевая карта не найдена в enemyCardsOnField');
+                    console.error('executeEnemyDummySwap: Target lost from field array');
                     return;
                 }
                 
-                // 2.2. Копируем данные целевой карты (глубокая копия для безопасности)
+                // 2.2. Prepare Returned Card
                 const returnedCardData = JSON.parse(JSON.stringify(targetCardData));
-                
-                // 2.3. Сбрасываем флаги возвращаемой карты
-                returnedCardData.used = false;
+                returnedCardData.used = false; // RESET USED STATUS
                 returnedCardData.isNew = false;
-                if (returnedCardData.tempPower !== undefined) {
-                    delete returnedCardData.tempPower;
-                }
+                delete returnedCardData.tempPower;
                 
-                // 2.4. Проверяем, не была ли это карта тактики (удаляем из тактики ПЕРЕД заменой)
+                // 2.3. Clean Tactics
                 const wasTacticsCard = enemyTacticsCards.some(tc => tc.cardData.id === targetCardData.id);
                 if (wasTacticsCard) {
-                    const tacticsIndex = enemyTacticsCards.findIndex(tc => tc.cardData.id === targetCardData.id);
-                    if (tacticsIndex !== -1) {
-                        enemyTacticsCards.splice(tacticsIndex, 1);
-                    }
+                    // Filter out ALL instances in tactics just in case
+                    enemyTacticsCards = enemyTacticsCards.filter(tc => tc.cardData.id != targetCardData.id);
                 }
                 
-                // 2.5. ЗАМЕНЯЕМ объект в enemyCardsOnField по индексу на Манекена (НЕ push!)
-                // Находим манекена в базе данных в зависимости от фракции бота
-                let dummyCardFromDB = null;
-                if (typeof allGameData !== 'undefined') {
-                    if (enemyTeamKey === 'allSpartakCards' && allGameData.allSpartakCards) {
-                        dummyCardFromDB = allGameData.allSpartakCards.find(card => card.ability === 'dummy');
-                    } else if (enemyTeamKey === 'allRPLCards' && allGameData.allRPLCards) {
-                        dummyCardFromDB = allGameData.allRPLCards.find(card => card.ability === 'dummy');
-                    } else if (enemyTeamKey === 'allFootballStarsCards' && allGameData.allFootballStarsCards) {
-                        dummyCardFromDB = allGameData.allFootballStarsCards.find(card => card.ability === 'dummy');
-                    }
+                // 2.4. Update Field Array (Swap Unit -> Dummy)
+                // Find correct dummy data from DB or fallback
+                let dummyDB = dummyCardData;
+                if (typeof allGameData !== 'undefined' && allGameData[enemyTeamKey]) {
+                     const found = allGameData[enemyTeamKey].find(c => c.ability === 'dummy');
+                     if (found) dummyDB = found;
                 }
+                const finalDummyCard = dummyDB || dummyCardData;
                 
-                // Если не нашли в базе, используем данные из dummyCardData (fallback)
-                const finalDummyCard = dummyCardFromDB || dummyCardData;
-                
-                // ЗАМЕНА по индексу (не push!)
+                // Update the field array slot
                 enemyCardsOnField[targetFieldIndex] = { 
-                    cardData: JSON.parse(JSON.stringify(finalDummyCard)), // Глубокая копия
+                    cardData: JSON.parse(JSON.stringify(finalDummyCard)), 
                     rowId: targetRowId 
                 };
                 
-                // 2.6. Удаляем Dummy из руки
-                const dummyIndex = enemyCards.findIndex(card => card.id === dummyCardData.id);
-                if (dummyIndex !== -1) {
-                    enemyCards.splice(dummyIndex, 1);
+                // 2.5. REMOVE DUMMY FROM HAND (Clean Filter)
+                // Remove ANY card with the dummy's ID from hand
+                enemyCards = enemyCards.filter(c => c.id != dummyCardData.id);
+                
+                // 2.6. ADD RETURNED UNIT TO HAND (Clean Filter + Push)
+                // CRITICAL: Remove ANY existing copies of the returned unit from hand first
+                const prevLength = enemyCards.length;
+                enemyCards = enemyCards.filter(c => c.id != returnedCardData.id);
+                
+                if (enemyCards.length < prevLength) {
+                    console.warn(`AI Dummy Fix: Removed ${prevLength - enemyCards.length} duplicate/stale copies of ${returnedCardData.name}`);
                 }
+
+                // Push single fresh copy
+                enemyCards.push(returnedCardData);
+                console.log(`AI Dummy: Successfully swapped. Hand size: ${enemyCards.length}`);
                 
-                // 2.7. Добавляем возвращаемую карту в руку (STRICT DUPLICATE CHECK)
-                // Шпионы и уникальные карты не должны дублироваться
-                const alreadyInHand = enemyCards.some(c => c.id === returnedCardData.id);
-                
-                if (!alreadyInHand) {
-                    // New entry
-                    enemyCards.push(returnedCardData);
-                    console.log(`AI (Dummy): Returned ${returnedCardData.name} (ID: ${returnedCardData.id}) to hand.`);
-                } else {
-                    console.warn(`AI (Dummy) Prevented Duplicate: ${returnedCardData.name} already in hand!`);
-                }
-                
-                // 3. Обновление DOM
-                // Используем finalDummyCard, который уже определен выше (строка 6519)
-                const finalDummyImageSrc = (finalDummyCard.miniImg && finalDummyCard.miniImg.trim() !== "") 
-                    ? finalDummyCard.miniImg 
-                    : finalDummyCard.img;
-                
+                // --- LOGIC FIX ENDS ---
+
+                // 3. Update DOM (Replace element)
+                const finalDummyImageSrc = (finalDummyCard.miniImg && finalDummyCard.miniImg.trim() !== "") ? finalDummyCard.miniImg : finalDummyCard.img;
                 const newFieldCard = document.createElement('div');
                 newFieldCard.className = 'card-on-field';
-                if (finalDummyCard.isHero || finalDummyCard.cardtype === 'hero') {
-                    newFieldCard.classList.add('hero');
-                }
+                if (finalDummyCard.isHero || finalDummyCard.cardtype === 'hero') newFieldCard.classList.add('hero');
                 
                 const newImg = document.createElement('img');
                 newImg.src = finalDummyImageSrc;
                 newFieldCard.appendChild(newImg);
                 
-                // Используем ID из базы данных (или из dummyCardData как fallback)
                 newFieldCard.setAttribute('data-card-id', finalDummyCard.id);
                 newFieldCard.setAttribute('data-full-img', finalDummyCard.img);
-                
                 newFieldCard.addEventListener('dragstart', (e) => e.preventDefault());
-                newImg.addEventListener('dragstart', (e) => e.preventDefault());
                 
                 addInspectionEvents(newFieldCard, finalDummyCard.img);
                 addFieldPowerBadge(newFieldCard, finalDummyCard);
                 
-                // Заменяем старую карту на новую
                 targetFieldCard.replaceWith(newFieldCard);
                 
-                // Удаляем карту из руки бота (DOM)
-                const dummyCardBackElement = enemyCardsContainer.querySelector(`[data-enemy-card-id="${dummyCardData.id}"]`);
-                if (dummyCardBackElement) {
-                    dummyCardBackElement.remove();
-                }
+                // Remove Dummy Card Back from UI Hand (if present)
+                const dummyCardBack = enemyCardsContainer.querySelector(`[data-enemy-card-id="${dummyCardData.id}"]`);
+                if (dummyCardBack) dummyCardBack.remove();
                 
-                // 4. ПРИНУДИТЕЛЬНОЕ обновление визуальной части ряда (критично!)
-                // Вызываем updateRowLayout для синхронизации DOM с данными массива
-                if (targetRow) {
-                    updateRowLayout(targetRow);
-                }
-                
-                // 5. Обновление UI
+                // 4. Final Updates
+                if (targetRow) updateRowLayout(targetRow);
                 updateEnemyScore();
-                renderEnemyHand();
-                renderOpponentHand();
+                renderEnemyHand(); // Logic Sync
+                renderOpponentHand(); // Visual Sync
                 
-                // 6. Проверка условий раунда
                 checkRoundEndCondition();
-                
-                // 7. Turn Switch
                 handleTurnSwitch();
                 
-                console.log('AI (Dummy): Обмен выполнен успешно');
             } catch (error) {
-                console.error('Ошибка в executeEnemyDummySwap:', error);
+                console.error('CRASH in executeEnemyDummySwap:', error);
+                handleTurnSwitch(); // Recover turn
             }
         }
         
