@@ -2667,8 +2667,8 @@
                         // --- Расчет силы ---
                         let finalPower = currentPower;
 
-                        // Герои не бафаются
-                        if (card.isHero || card.cardtype === 'hero') {
+                        // Heroes AND Dummies are immune to buffs/debuffs
+                        if (card.isHero || card.cardtype === 'hero' || card.ability === 'dummy') {
                             score += currentPower;
                             finalPower = currentPower;
                         } else {
@@ -2749,7 +2749,8 @@
                         
                         let finalPower = currentPower;
 
-                        if (card.isHero || card.cardtype === 'hero') {
+                        // Heroes AND Dummies are immune to buffs/debuffs
+                        if (card.isHero || card.cardtype === 'hero' || card.ability === 'dummy') {
                             score += currentPower;
                             finalPower = currentPower;
                         } else {

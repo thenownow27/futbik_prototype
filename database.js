@@ -428,7 +428,7 @@ const allGameData = {
             power: 15,
             img: 'images/footballstars/full/messi.jpg',
             miniImg: 'images/footballstars/mini/messi.jpg',
-            ability: 'bond',
+            ability: '',
             cardtype: 'hero',
             isHero: true
         },
