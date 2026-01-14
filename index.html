@@ -7633,19 +7633,16 @@
                     enemyCards.splice(dummyIndex, 1);
                 }
                 
-                // 2.7. Добавляем возвращаемую карту в руку (Smart Upsert)
-                // FIX: Find ANY instance of this card ID (even if used) to prevent duplicates
-                const existingIndex = enemyCards.findIndex(card => card.id === returnedCardData.id);
+                // 2.7. Добавляем возвращаемую карту в руку (STRICT DUPLICATE CHECK)
+                // Шпионы и уникальные карты не должны дублироваться
+                const alreadyInHand = enemyCards.some(c => c.id === returnedCardData.id);
                 
-                if (existingIndex !== -1) {
-                    // Revive the existing card entry
-                    console.log(`AI (Dummy): Card ${returnedCardData.name} found in memory. Resetting state.`);
-                    enemyCards[existingIndex] = returnedCardData;
-                    enemyCards[existingIndex].used = false; // Important: Mark as active
-                } else {
+                if (!alreadyInHand) {
                     // New entry
                     enemyCards.push(returnedCardData);
-                    console.log(`AI (Dummy): Returned ${returnedCardData.name} to hand.`);
+                    console.log(`AI (Dummy): Returned ${returnedCardData.name} (ID: ${returnedCardData.id}) to hand.`);
+                } else {
+                    console.warn(`AI (Dummy) Prevented Duplicate: ${returnedCardData.name} already in hand!`);
                 }
                 
                 // 3. Обновление DOM
@@ -7801,35 +7798,44 @@
                 if (dummyHandIndex !== -1) myCards.splice(dummyHandIndex, 1);
 
                 // B. Prepare Returning Card
+                // Глубокая копия, чтобы разорвать связь с объектом на поле
                 const returnedCard = JSON.parse(JSON.stringify(targetCardData));
                 returnedCard.used = false;
                 returnedCard.isNew = false;
                 delete returnedCard.tempPower;
 
-                // C. Add Returned Card to Hand
-                if (!myCards.some(c => c.id === returnedCard.id)) {
+                // C. Add Returned Card to Hand (STRICT DUPLICATE CHECK)
+                // Шпионы и уникальные карты не должны дублироваться
+                const alreadyInHand = myCards.some(c => c.id === returnedCard.id);
+                if (!alreadyInHand) {
                     myCards.push(returnedCard);
+                    console.log(`Dummy Swap: Returning ${returnedCard.name} (ID: ${returnedCard.id}) to hand.`);
+                } else {
+                    console.warn(`Dummy Swap Prevented Duplicate: ${returnedCard.name} already in hand!`);
                 }
 
-                // D. Clean Tactics
+                // D. Clean Tactics (Если это была карта поддержки)
                 const wasTactic = playerTacticsCards.some(tc => tc.cardData.id === targetCardData.id);
                 if (wasTactic) {
                     playerTacticsCards = playerTacticsCards.filter(tc => tc.cardData.id !== targetCardData.id);
                 }
 
                 // E. SWAP IN ARRAY
-                // Find correct Dummy DB Data
+                // Находим данные манекена в базе
                 let dummyDB = dummyData;
                 if (typeof allGameData !== 'undefined' && playerTeamKey && allGameData[playerTeamKey]) {
                      const found = allGameData[playerTeamKey].find(c => c.ability === 'dummy');
                      if (found) dummyDB = found;
                 }
                 
-                // Replace in logic
-                playerCardsOnField[targetIndex] = {
-                    cardData: JSON.parse(JSON.stringify(dummyDB)),
-                    rowId: targetRowId
-                };
+                // ВАЖНО: Мы меняем запись в массиве поля.
+                // targetIndex был найден в шаге 1 (DATA VALIDATION)
+                if (targetIndex !== -1) {
+                    playerCardsOnField[targetIndex] = {
+                        cardData: JSON.parse(JSON.stringify(dummyDB)),
+                        rowId: targetRowId
+                    };
+                }
 
                 // 7. FINALIZE (After Animation)
                 setTimeout(() => {
