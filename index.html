@@ -5739,7 +5739,6 @@
                 const teamKey = isPlayerSide ? playerTeamKey : enemyTeamKey;
                 const graveyard = isPlayerSide ? playerGraveyardCards : enemyGraveyardCards;
                 const graveyardElement = isPlayerSide ? playerGraveyard : enemyGraveyard;
-                const fieldArray = isPlayerSide ? playerCardsOnField : enemyCardsOnField;
                 
                 // Проверяем условие: текущая команда == 'allFootballStarsCards'
                 if (teamKey !== 'allFootballStarsCards') {
@@ -5788,27 +5787,34 @@
                     targetRowId = rows[Math.floor(Math.random() * rows.length)];
                 }
                 
-                // Получаем целевой ряд
-                let targetRow = isPlayerSide ? getTargetRow(targetRowId) : getEnemyTargetRow(targetRowId);
-                if (!targetRow) {
-                    // Fallback на attack
-                    targetRowId = 'attack';
-                    targetRow = isPlayerSide ? getTargetRow('attack') : getEnemyTargetRow('attack');
-                    if (!targetRow) {
-                        console.error('Не удалось найти целевой ряд для возврата карты');
-                        resolve();
-                        return;
-                    }
+                // --- ЛОГИКА ОПРЕДЕЛЕНИЯ СТОРОНЫ (Fix for Spies) ---
+                // По умолчанию карта идет тому, чья пассивка сработала
+                let destinationIsPlayer = isPlayerSide;
+                
+                // НО если это Шпион, он всегда летит на противоположную сторону
+                if (selectedCard.ability === 'spy') {
+                    destinationIsPlayer = !isPlayerSide;
+                }
+
+                // Выбираем правильный массив данных и DOM-элемент ряда
+                const targetFieldArray = destinationIsPlayer ? playerCardsOnField : enemyCardsOnField;
+                const targetRowElement = destinationIsPlayer ? getTargetRow(targetRowId) : getEnemyTargetRow(targetRowId);
+
+                if (!targetRowElement) {
+                    console.error('Не удалось найти целевой ряд для пассивного умения');
+                    resolve();
+                    return;
                 }
                 
-                // Добавляем карту в массив на поле
-                fieldArray.push({
+                // Добавляем карту в правильный массив на поле
+                targetFieldArray.push({
                     cardData: selectedCard,
                     rowId: targetRowId
                 });
                 
-                // 3. Создаем DOM-элемент и запускаем анимацию полета
-                animateCardFromGraveyard(selectedCard, graveyardElement, targetRow, targetRowId, isPlayerSide, async () => {
+                // 3. Создаем DOM-элемент и запускаем анимацию
+                // Важно: передаем targetRowElement, который мы только что вычислили с учетом шпиона
+                animateCardFromGraveyard(selectedCard, graveyardElement, targetRowElement, targetRowId, isPlayerSide, async () => {
                     // 1. Обновляем счет и визуал (общая часть)
                     updatePlayerScore();
                     updateEnemyScore();
